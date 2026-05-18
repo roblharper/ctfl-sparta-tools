@@ -1,0 +1,8 @@
+name = "sphere_cone_case"
+
+[species]
+N2 = 0.6169
+O2 = 0.0
+O  = 0.2573
+NO = 0.0046
+N  = 0.1212

@@ -1,0 +1,7 @@
+name = "cylinder_case_heatflux"
+
+[species]
+N2 = 0.738
+O2 = 0.162
+O  = 0.059
+NO = 0.041
