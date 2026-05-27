@@ -109,6 +109,38 @@ class Flow:
             tau_mix += sp_s.mol_frac / inverse_tau
         return tau_mix
 
+    def collision_freq(self, species_a: str, species_b: str) -> float:
+        """VHS pair collision frequency ν_AB (s⁻¹).
+
+        Gives the rate at which a single molecule of species A collides with
+        all molecules of species B in the mixture:
+
+            ν_AB = n_B · π d_ref² / (1 + δ_AB)
+                   · √(8 k T_ref / π m_r)
+                   · (T / T_ref)^(1 - ω)
+
+        where δ_AB = 1 for like-species pairs (prevents double-counting) and
+        δ_AB = 0 for unlike pairs.  d_ref, m_r, T_ref, and ω are taken from
+        the averaged VHS parameters of the collision pair.
+
+        Parameters
+        ----------
+        species_a, species_b : str
+            Species IDs as they appear in the mixture (e.g. ``"N2"``, ``"O"``).
+
+        Returns
+        -------
+        float
+            Collision frequency in s⁻¹.
+        """
+        pair = self._get_pair(species_a, species_b)
+        sp_b = self.mixture.species[species_b]
+        n_b = sp_b.mol_frac * self.n
+        delta_ab = 1 if species_a == species_b else 0
+        mean_speed_term = math.sqrt((8 * BOLTZ * pair.tref) / (PI * pair.mreduced))
+        temp_scaling = (self.T_tr / pair.tref) ** (1.0 - pair.omega)
+        return (n_b * PI * pair.dref**2 / (1 + delta_ab)) * mean_speed_term * temp_scaling
+
     def _compute_mixture_properties(self):
         self.gamma_mix = sum(
             self.mixture.species[s].mol_frac * self.mixture.species[s].gamma
