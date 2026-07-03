@@ -6,7 +6,10 @@ build-backend = "setuptools.build_meta"
 name = "ctfl-sparta-tools"
 version = "0.2.0"
 description = "CTFL SPARTA DSMC pre/post-processing tools"
-requires-python = ">=3.11"
+requires-python = ">=3.9"
+
+[project.optional-dependencies]
+toml = ["tomli>=1.2; python_version<'3.11'"]
 
 [project.scripts]
 sparta-tools = "sparta_tools.cli:main"
