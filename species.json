@@ -20,7 +20,8 @@
         "birdc1": 0.0,
         "birdc2": 0.0,
         "MWA": 0.0,
-        "MWB": 0.0
+        "MWB": 0.0,
+        "homonuclear": false
     },
     "O2": {
         "id": "O2",
@@ -43,7 +44,8 @@
         "birdc1": 56.5,
         "birdc2": 153.5,
         "MWA": 138.0,
-        "MWB": 0.03
+        "MWB": 0.03,
+        "homonuclear": true
     },
     "N2": {
         "id": "N2",
@@ -66,7 +68,8 @@
         "birdc1": 9.1,
         "birdc2": 220.0,
         "MWA": 221.0,
-        "MWB": 0.029
+        "MWB": 0.029,
+        "homonuclear": true
     },
     "O": {
         "id": "O",
@@ -89,7 +92,8 @@
         "birdc1": 0.0,
         "birdc2": 0.0,
         "MWA": 0.0,
-        "MWB": 0.0
+        "MWB": 0.0,
+        "homonuclear": false
     },
     "N": {
         "id": "N",
@@ -112,7 +116,8 @@
         "birdc1": 0.0,
         "birdc2": 0.0,
         "MWA": 0.0,
-        "MWB": 0.0
+        "MWB": 0.0,
+        "homonuclear": false
     },
     "NO": {
         "id": "NO",
@@ -135,7 +140,8 @@
         "birdc1": 9.1,
         "birdc2": 220.0,
         "MWA": 49.5,
-        "MWB": 0.042
+        "MWB": 0.042,
+        "homonuclear": false
     },
     "O2+": {
         "id": "O2+",
@@ -158,7 +164,8 @@
         "birdc1": 0.0,
         "birdc2": 0.0,
         "MWA": 0.0,
-        "MWB": 0.0
+        "MWB": 0.0,
+        "homonuclear": true
     },
     "N2+": {
         "id": "N2+",
@@ -181,7 +188,8 @@
         "birdc1": 0.0,
         "birdc2": 0.0,
         "MWA": 0.0,
-        "MWB": 0.0
+        "MWB": 0.0,
+        "homonuclear": true
     },
     "O+": {
         "id": "O+",
@@ -204,7 +212,8 @@
         "birdc1": 0.0,
         "birdc2": 0.0,
         "MWA": 0.0,
-        "MWB": 0.0
+        "MWB": 0.0,
+        "homonuclear": false
     },
     "N+": {
         "id": "N+",
@@ -227,7 +236,8 @@
         "birdc1": 0.0,
         "birdc2": 0.0,
         "MWA": 0.0,
-        "MWB": 0.0
+        "MWB": 0.0,
+        "homonuclear": false
     },
     "NO+": {
         "id": "NO+",
@@ -250,7 +260,8 @@
         "birdc1": 0.0,
         "birdc2": 0.0,
         "MWA": 0.0,
-        "MWB": 0.0
+        "MWB": 0.0,
+        "homonuclear": false
     },
     "e": {
         "id": "e",
@@ -273,7 +284,8 @@
         "birdc1": 0.0,
         "birdc2": 0.0,
         "MWA": 0.0,
-        "MWB": 0.0
+        "MWB": 0.0,
+        "homonuclear": false
     },
     "CO": {
         "id": "CO",
@@ -296,7 +308,8 @@
         "birdc1": 37.7,
         "birdc2": 175.0,
         "MWA": 0.0,
-        "MWB": 0.0
+        "MWB": 0.0,
+        "homonuclear": false
     },
     "CO2": {
         "id": "CO2",
@@ -319,7 +332,8 @@
         "birdc1": 37.7,
         "birdc2": 175.0,
         "MWA": 0.0,
-        "MWB": 0.0
+        "MWB": 0.0,
+        "homonuclear": false
     },
     "He": {
         "id": "He",
@@ -342,6 +356,7 @@
         "birdc1": 0.0,
         "birdc2": 0.0,
         "MWA": 0.0,
-        "MWB": 0.0
+        "MWB": 0.0,
+        "homonuclear": false
     }
 }

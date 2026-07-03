@@ -1,0 +1,217 @@
+"""Headless compute engine — wraps Flow/Mixture/shock, no Qt dependency."""
+
+from __future__ import annotations
+
+import os
+import sys
+import math
+from dataclasses import dataclass, field
+from typing import Optional
+
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
+
+from species import Species
+from mixture import Mixture
+from flow import Flow
+from shock import normal_shock
+
+
+@dataclass
+class DerivedQuantities:
+    mfp_free: float = 0.0
+    mfp_shock: Optional[float] = None
+    tau_free: float = 0.0
+    tau_shock: Optional[float] = None
+    mach: float = 0.0
+    kn_free: float = 0.0
+    kn_shock: Optional[float] = None
+    n_free: float = 0.0
+    n_shock: Optional[float] = None
+    T_shock: Optional[float] = None
+    P_shock: Optional[float] = None
+    rho_shock: Optional[float] = None
+    u_shock: Optional[float] = None
+    gamma_mix: float = 0.0
+    speed_of_sound: float = 0.0
+    dt_recommended: float = 0.0
+    dt_conservative: float = 0.0
+    fnum: float = 0.0
+    warmup_steps: int = 0
+    total_steps: int = 0
+    flow_through_time: float = 0.0
+    n_cells: int = 0
+    n_cells_uniform: int = 0
+    flow_volume: float = 0.0
+    grid_dx: float = 0.0
+    grid_dy: float = 0.0
+    collision_freqs: dict = field(default_factory=dict)
+    error: str = ""
+
+
+def build_mixture_from_dict(species_dict: dict[str, float], species_file: str) -> Optional[Mixture]:
+    """Build Mixture from {species_id: mol_frac}; returns None on failure."""
+    if not species_dict:
+        return None
+    total = sum(species_dict.values())
+    if total <= 0:
+        return None
+    normalised = {k: v / total for k, v in species_dict.items() if v > 0}
+    try:
+        return Mixture(species_dict=normalised, species_file=species_file)
+    except Exception:
+        return None
+
+
+def _polygon_area(pts: list) -> float:
+    """Shoelace formula for polygon area from list of (x, y) tuples."""
+    n = len(pts)
+    if n < 3:
+        return 0.0
+    area = sum(pts[i][0] * pts[(i + 1) % n][1] - pts[(i + 1) % n][0] * pts[i][1]
+               for i in range(n))
+    return abs(area) * 0.5
+
+
+def _surf_polygon_area(surf_path: str) -> float:
+    """Parse a 2D SPARTA .surf file and return the enclosed polygon area."""
+    pts: list = []
+    in_pts = False
+    try:
+        with open(surf_path) as f:
+            for raw in f:
+                line = raw.strip()
+                if not line or line.startswith("#"):
+                    continue
+                low = line.lower()
+                if low.startswith("points"):
+                    in_pts = True
+                    continue
+                if low.startswith("lines") or low.startswith("triangles"):
+                    break
+                if in_pts:
+                    parts = line.split()
+                    if len(parts) >= 3:
+                        try:
+                            pts.append((float(parts[1]), float(parts[2])))
+                        except ValueError:
+                            pass
+    except Exception:
+        return 0.0
+    return _polygon_area(pts)
+
+
+def _resolve_flow_volume(case, box_volume: float) -> float:
+    sim = case.sim
+    mode = sim.flow_volume_mode
+    if mode == "sparta" and sim.flow_volume_sparta > 0:
+        return sim.flow_volume_sparta
+    if mode == "computed":
+        surf_path = case.grid.surface_file
+        if surf_path and os.path.isfile(surf_path):
+            geo = case.grid
+            zlen = abs(geo.zhi - geo.zlo) if geo.dimension == 3 else 1.0
+            area = _surf_polygon_area(surf_path)
+            if area > 0:
+                return max(0.0, box_volume - area * zlen)
+    return box_volume
+
+
+def compute(case, species_file: str, L_ref: float = 1.0) -> DerivedQuantities:
+    """Run all DSMC calculations for *case*.  L_ref in metres (for Kn)."""
+    result = DerivedQuantities()
+
+    mix = build_mixture_from_dict(case.species_dict, species_file)
+    if mix is None:
+        result.error = "Define at least one species with nonzero mole fraction."
+        return result
+
+    fs = case.freestream
+    fq: dict = {"u": fs.velocity}
+
+    if fs.density > 0 and fs.temperature > 0:
+        fq["T"] = fs.temperature
+        fq["rho"] = fs.density
+    elif fs.pressure > 0 and fs.temperature > 0:
+        fq["T"] = fs.temperature
+        fq["P"] = fs.pressure
+    elif fs.density > 0 and fs.pressure > 0:
+        fq["rho"] = fs.density
+        fq["P"] = fs.pressure
+    else:
+        result.error = "Provide at least two of: temperature, pressure, density."
+        return result
+
+    try:
+        flow_free = Flow(mix, fq)
+    except Exception as e:
+        result.error = f"Flow construction failed: {e}"
+        return result
+
+    result.mfp_free = flow_free.mean_free_path()
+    result.tau_free = flow_free.mean_collision_time()
+    result.mach = flow_free.M
+    result.gamma_mix = flow_free.gamma_mix
+    result.speed_of_sound = flow_free.a
+    result.n_free = flow_free.n
+
+    if L_ref > 0:
+        result.kn_free = result.mfp_free / L_ref
+
+    if flow_free.M > 1.0:
+        try:
+            shock_fq = normal_shock(flow_free)
+            shock_fq["u"] = shock_fq.get("u", fs.velocity / 4.0)
+            flow_shock = Flow(mix, shock_fq)
+            result.mfp_shock = flow_shock.mean_free_path()
+            result.tau_shock = flow_shock.mean_collision_time()
+            result.n_shock = flow_shock.n
+            result.T_shock = flow_shock.T_tr
+            result.P_shock = flow_shock.P
+            result.rho_shock = flow_shock.rho
+            result.u_shock = flow_shock.u
+            if L_ref > 0:
+                result.kn_shock = result.mfp_shock / L_ref
+        except Exception:
+            pass
+
+    tau_ref = result.tau_shock if result.tau_shock else result.tau_free
+    result.dt_recommended = case.sim.dt_factor * tau_ref
+    result.dt_conservative = 0.01 * tau_ref
+
+    geo = case.grid
+    sim = case.sim
+    xlen = abs(geo.xhi - geo.xlo)
+    ylen = abs(geo.yhi - geo.ylo)
+    zlen = abs(geo.zhi - geo.zlo) if geo.dimension == 3 else 1.0
+
+    box_volume = xlen * ylen * zlen
+    result.flow_volume = _resolve_flow_volume(case, box_volume)
+
+    uniform_cells = geo.n_cells_x * geo.n_cells_y * (geo.n_cells_z if geo.dimension == 3 else 1)
+    result.n_cells = sim.n_cells_amr if sim.n_cells_amr > 0 else uniform_cells
+    result.n_cells_uniform = uniform_cells
+    result.grid_dx = xlen / geo.n_cells_x if geo.n_cells_x > 0 else 0.0
+    result.grid_dy = ylen / geo.n_cells_y if geo.n_cells_y > 0 else 0.0
+
+    if sim.fnum_override > 0:
+        result.fnum = sim.fnum_override
+    elif result.n_cells > 0 and result.flow_volume > 0:
+        result.fnum = (flow_free.n * result.flow_volume) / (result.n_cells * sim.n_ppc)
+
+    prod_steps = sim.ave_nevery * sim.ave_nrepeat
+    if fs.velocity > 0 and xlen > 0 and result.dt_recommended > 0:
+        result.flow_through_time = xlen / fs.velocity
+        fts = max(1, int(result.flow_through_time / result.dt_recommended))
+        result.warmup_steps = int(sim.warmup_factor * fts)
+        result.total_steps = result.warmup_steps + prod_steps
+
+    try:
+        for sp_a in mix.species_ids:
+            for sp_b in mix.species_ids:
+                result.collision_freqs[f"{sp_a}-{sp_b}"] = flow_free.collision_freq(sp_a, sp_b)
+    except Exception:
+        pass
+
+    return result

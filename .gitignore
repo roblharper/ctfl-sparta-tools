@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+*.egg
+.eggs/
+dist/
+build/
+*.whl
+*.tar.gz
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# PyInstaller
+*.spec.bak
+
+# IDE
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
+
+# Case-specific files — not part of the library
+*.toml
+!pyproject.toml
+theory_runs.py
+cyl_case_heatflux.py
+cyl_case_og_cond.py
+theory_inputs/

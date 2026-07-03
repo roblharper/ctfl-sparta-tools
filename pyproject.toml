@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ctfl-sparta-tools"
+version = "0.2.0"
+description = "CTFL SPARTA DSMC pre/post-processing tools"
+requires-python = ">=3.11"
+
+[project.scripts]
+sparta-tools = "sparta_tools.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["sparta_tools*"]
+
+[tool.setuptools]
+py-modules = ["species", "mixture", "flow", "shock", "dsmc", "thermo", "list_parser"]

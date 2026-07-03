@@ -27,6 +27,7 @@ class Species:
     MWA: float = 0.0
     MWB: float = 0.0
     mol_frac: float = 0.0
+    homonuclear: bool = False
 
     @classmethod
     def load_all(cls, filename: str) -> Dict[str, "Species"]:
