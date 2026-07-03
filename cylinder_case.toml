@@ -1,7 +1,0 @@
-name = "cylinder_case"
-
-[species]
-N2 = 0.740
-O2 = 0.137
-O  = 0.055
-NO = 0.068
