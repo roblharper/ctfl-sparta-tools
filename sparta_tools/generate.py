@@ -97,7 +97,9 @@ def generate(case, derived: DerivedQuantities, dt_override: float = 0.0) -> str:
 
     # ── Species & mixture ─────────────────────────────────────────────────────
     L("# --- Species and mixture ---")
-    sp_file_base = os.path.basename(case.species_file) if case.species_file else "species.list"
+    # Species file: if a generated .list file exists alongside the .in, prefer it;
+    # otherwise fall back to whatever species_file is set.
+    sp_file_base = "species.list"
     if sp_ids:
         L(f"species        {sp_file_base} {' '.join(sp_ids)}")
         L()
@@ -129,7 +131,7 @@ def generate(case, derived: DerivedQuantities, dt_override: float = 0.0) -> str:
 
     # ── Collision model ───────────────────────────────────────────────────────
     if ph.collision_model != "none" and sp_ids:
-        coll_base = os.path.basename(case.species_file).replace(".json", ".vss") if case.species_file else "collision.list"
+        coll_base = "collision.vss"
         relax_kw = "variable" if ph.rot_relax_model == "parker" else "constant"
         L("# --- Collision model ---")
         L(f"collide        vss all {coll_base} relax {relax_kw} vibmodel {ph.vib_relax_model}")
@@ -154,6 +156,19 @@ def generate(case, derived: DerivedQuantities, dt_override: float = 0.0) -> str:
     if ph.react_enabled and ph.react_file:
         L("# --- Chemistry ---")
         L(f"react          {ph.react_style} {os.path.basename(ph.react_file)}")
+        L()
+    elif ph.react_enabled:
+        # react enabled but no file path supplied — use auto-generated file
+        L("# --- Chemistry ---")
+        L(f"react          {ph.react_style} air.chem")
+        L()
+
+    # Surface chemistry (surf_react prob style)
+    surf_react_file = getattr(case, "_surf_react_file", "")
+    if surf_react_file:
+        L("# --- Surface chemistry ---")
+        L(f"surf_react     1 prob {os.path.basename(surf_react_file)}")
+        L("surf_modify    all react 1")
         L()
 
     # ── Computes ──────────────────────────────────────────────────────────────

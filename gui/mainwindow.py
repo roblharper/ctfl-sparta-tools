@@ -18,6 +18,8 @@ from .tab_geometry import GeometryTab
 from .tab_derived import DerivedTab
 from .tab_writer import WriterTab
 from .tab_computes import ComputesTab
+from .tab_species import SpeciesTab
+from .tab_chemistry import ChemistryTab
 
 
 class MainWindow(QMainWindow):
@@ -42,6 +44,7 @@ class MainWindow(QMainWindow):
         self._timer.timeout.connect(self._recompute)
 
         self.bus.changed.connect(self._schedule_recompute)
+        self.bus.species_changed.connect(self._on_species_changed)
         self.geo_tab.auto_grid_requested.connect(self._auto_grid)
 
         # Initial compute
@@ -109,6 +112,8 @@ class MainWindow(QMainWindow):
         self.phys_tab = PhysicsTab(self.bus)
         self.geo_tab = GeometryTab(self.bus)
         self.computes_tab = ComputesTab(self.bus)
+        self.species_tab = SpeciesTab(self.bus)
+        self.chem_tab = ChemistryTab(self.bus)
         self.derived_tab = DerivedTab(self.bus)
         self.writer_tab = WriterTab(self.bus)
 
@@ -116,6 +121,8 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.phys_tab,      "Physics")
         self.tabs.addTab(self.geo_tab,       "Geometry")
         self.tabs.addTab(self.computes_tab,  "Computes/Dumps")
+        self.tabs.addTab(self.species_tab,   "Species & Collisions")
+        self.tabs.addTab(self.chem_tab,      "Chemistry")
         self.tabs.addTab(self.derived_tab,   "Derived Quantities")
         self.tabs.addTab(self.writer_tab,    "Input Writer")
 
@@ -168,6 +175,10 @@ class MainWindow(QMainWindow):
                 f"Δy={derived.grid_dy:.3e} m ({dy_mfp:.1f} λ)  "
                 f"Total cells: {derived.n_cells:,}"
             )
+
+    def _on_species_changed(self):
+        """Refresh species/collision tables when active species list changes."""
+        self.species_tab.refresh_from_state()
 
     def _auto_grid(self):
         """Compute auto grid and apply to geometry tab."""
@@ -247,7 +258,9 @@ class MainWindow(QMainWindow):
         """Re-hydrate AppState from a saved JSON dict."""
         from .state import (AppState, FreestreamState, WallState,
                              PhysicsState, GeometryState, SimulationState,
-                             ComputeDumpState, MixtureEntry)
+                             ComputeDumpState, MixtureEntry,
+                             SpeciesOverride, CollisionOverride,
+                             ChemistryState, GasReaction, SurfReaction)
 
         state = AppState()
         self.bus.state = state
@@ -277,6 +290,30 @@ class MainWindow(QMainWindow):
             ]
         if "species_file" in data:
             state.species_file = data["species_file"]
+        if "species_overrides" in data:
+            state.species_overrides = [
+                SpeciesOverride(**{k: v for k, v in e.items() if hasattr(SpeciesOverride, k) or k == "species_id"})
+                for e in data["species_overrides"]
+            ]
+        if "collision_overrides" in data:
+            state.collision_overrides = [
+                CollisionOverride(**{k: v for k, v in e.items() if hasattr(CollisionOverride, k) or k == "pair_key"})
+                for e in data["collision_overrides"]
+            ]
+        if "chemistry" in data:
+            cd = data["chemistry"]
+            chem = state.chemistry
+            _fill(chem, cd)
+            if "gas_reactions" in cd:
+                chem.gas_reactions = [
+                    GasReaction(**{k: v for k, v in r.items() if k in GasReaction.__dataclass_fields__})
+                    for r in cd["gas_reactions"]
+                ]
+            if "surf_reactions" in cd:
+                chem.surf_reactions = [
+                    SurfReaction(**{k: v for k, v in r.items() if k in SurfReaction.__dataclass_fields__})
+                    for r in cd["surf_reactions"]
+                ]
 
         self._rebuild_ui_from_state()
         self.bus.notify()
@@ -360,3 +397,9 @@ class MainWindow(QMainWindow):
 
         # Computes/Dumps
         self.computes_tab.refresh_from_state()
+
+        # Species & Collisions
+        self.species_tab.refresh_from_state()
+
+        # Chemistry
+        self.chem_tab.refresh_from_state()

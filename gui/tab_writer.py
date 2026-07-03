@@ -137,7 +137,13 @@ class WriterTab(QWidget):
         try:
             with open(path, "w") as f:
                 f.write(self.editor.toPlainText())
-            self.status_label.setText(f"Saved: {path}")
+            # Write support files alongside the .in
+            out_dir = os.path.dirname(os.path.abspath(path))
+            extras = _writer.write_support_files(self.bus.state, out_dir)
+            msg = f"Saved: {os.path.basename(path)}"
+            if extras:
+                msg += "  +  " + ",  ".join(os.path.basename(p) for p in extras)
+            self.status_label.setText(msg)
         except Exception as e:
             self.status_label.setText(f"Save failed: {e}")
 
