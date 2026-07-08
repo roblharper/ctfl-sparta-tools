@@ -167,6 +167,32 @@ def _surf_prob(gamma: float, E_kJ: float, T_wall: float) -> float:
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
+def _parse_species_from_reaction(rxn_str: str) -> set[str]:
+    """Extract all species tokens from a reaction string like 'N2 + O --> N + N + O'."""
+    import re
+    # Drop everything after '-->' separator combined; split on '+' and whitespace
+    lhs, _, rhs = rxn_str.partition("-->")
+    tokens = set()
+    for part in (lhs + " " + rhs).split("+"):
+        tok = part.strip()
+        # Skip NULL (recombination sink), blank, and pure numbers
+        if tok and tok.upper() != "NULL" and not re.fullmatch(r"[\d.eE+\-]+", tok):
+            tokens.add(tok)
+    return tokens
+
+
+def species_in_reactions(reactions: list[dict]) -> set[str]:
+    """Return the set of all species (reactants + products) referenced in *reactions*.
+
+    reactions: list of dicts with key 'reaction' (e.g. from default_gas_reactions())
+    """
+    result: set[str] = set()
+    for r in reactions:
+        if r.get("enabled", True):
+            result |= _parse_species_from_reaction(r.get("reaction", ""))
+    return result
+
+
 def default_gas_reactions() -> list[dict]:
     """Return Park 1993 11-species air TCE reactions as a list of dicts."""
     result = []

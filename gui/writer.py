@@ -79,10 +79,36 @@ def write_support_files(state, out_dir: str) -> list[str]:
     from sparta_tools.chem_writer import (
         write_tce_chem_file, write_surf_chem_file,
         default_gas_reactions, default_surf_reactions,
+        species_in_reactions,
     )
     from .state import GasReaction, SurfReaction
 
-    species_ids = [e.species_id for e in state.species_list if e.species_id and e.mol_frac > 0]
+    # Inflow species (non-zero mole fraction)
+    inflow_ids = [e.species_id for e in state.species_list if e.species_id and e.mol_frac > 0]
+
+    # Determine gas reactions to use (custom or defaults)
+    chem = state.chemistry
+    gas_rxns = chem.gas_reactions if chem.gas_reactions else []
+    if not gas_rxns:
+        gas_dicts = default_gas_reactions()
+    else:
+        gas_dicts = [
+            {
+                "reaction": r.reaction, "type": r.rxn_type, "style": r.style,
+                "C1": r.C1, "C2": r.C2, "C3": r.C3, "C4": r.C4, "C5": r.C5,
+                "enabled": r.enabled,
+            }
+            for r in gas_rxns
+        ]
+
+    # Full species set = inflow + all reaction product species
+    if state.physics.react_enabled:
+        rxn_sp = species_in_reactions(gas_dicts)
+        extra = sorted(rxn_sp - set(inflow_ids))
+    else:
+        extra = []
+    species_ids = inflow_ids + extra
+
     sp_file = state.species_file
 
     written: list[str] = []
@@ -128,19 +154,6 @@ def write_support_files(state, out_dir: str) -> list[str]:
     written.append(col_out)
 
     # ── TCE chemistry file ────────────────────────────────────────────────────
-    chem = state.chemistry
-    gas_rxns = chem.gas_reactions if chem.gas_reactions else []
-    if not gas_rxns:
-        gas_dicts = default_gas_reactions()
-    else:
-        gas_dicts = [
-            {
-                "reaction": r.reaction, "type": r.rxn_type, "style": r.style,
-                "C1": r.C1, "C2": r.C2, "C3": r.C3, "C4": r.C4, "C5": r.C5,
-                "enabled": r.enabled,
-            }
-            for r in gas_rxns
-        ]
     tce_out = os.path.join(out_dir, "air.chem")
     write_tce_chem_file(gas_dicts, out_path=tce_out, header=f"Case: {state.case_name}")
     written.append(tce_out)

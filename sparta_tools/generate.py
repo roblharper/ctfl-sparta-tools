@@ -57,8 +57,25 @@ def generate(case, derived: DerivedQuantities, dt_override: float = 0.0) -> str:
     prod_steps = nevery * nrepeat
     warmup = derived.warmup_steps if derived.warmup_steps > 0 else 10000
 
+    # Inflow species (non-zero mole fraction) — used for mixture fractions
     sp_ids = [sp for sp, frac in case.species_dict.items() if frac > 0]
     total_frac = sum(case.species_dict.get(sp, 0) for sp in sp_ids)
+
+    # Full species set = inflow + all species that appear in enabled reactions
+    # SPARTA only activates reactions whose reactants/products are all declared,
+    # but the species command must list every species that can exist in the sim.
+    _all_sp_set = set(sp_ids)
+    if ph.react_enabled:
+        try:
+            from .chem_writer import default_gas_reactions, species_in_reactions
+            rxn_sp = species_in_reactions(default_gas_reactions())
+            _all_sp_set |= rxn_sp
+        except Exception:
+            pass
+    # Preserve inflow order first, then append product-only species alphabetically
+    _extra = sorted(_all_sp_set - set(sp_ids))
+    all_sp_ids = sp_ids + _extra
+
     has_surf = bool(geo.surface_file)
 
     # ── Header ───────────────────────────────────────────────────────────────
@@ -97,13 +114,13 @@ def generate(case, derived: DerivedQuantities, dt_override: float = 0.0) -> str:
 
     # ── Species & mixture ─────────────────────────────────────────────────────
     L("# --- Species and mixture ---")
-    # Species file: if a generated .list file exists alongside the .in, prefer it;
-    # otherwise fall back to whatever species_file is set.
     sp_file_base = "species.list"
-    if sp_ids:
-        L(f"species        {sp_file_base} {' '.join(sp_ids)}")
+    if all_sp_ids:
+        # Declare ALL possible species (inflow + reaction products)
+        L(f"species        {sp_file_base} {' '.join(all_sp_ids)}")
         L()
-        mix_parts = [f"mixture        all {' '.join(sp_ids)}",
+        # mixture global: set bulk properties using inflow species only
+        mix_parts = [f"mixture        all {' '.join(all_sp_ids)}",
                      f"nrho {_s(n_free)}",
                      f"vstream {_g(fs.velocity)} 0 0",
                      f"temp {_g(fs.temperature)}"]
@@ -111,8 +128,9 @@ def generate(case, derived: DerivedQuantities, dt_override: float = 0.0) -> str:
             mix_parts.append(f"tvib {_g(fs.t_vib)}")
         L(" ".join(mix_parts))
         L()
-        for sp in sp_ids:
-            frac = case.species_dict[sp] / total_frac if total_frac > 0 else 0
+        # Set mole fractions — inflow species get their fractions, products get 0
+        for sp in all_sp_ids:
+            frac = case.species_dict.get(sp, 0.0) / total_frac if total_frac > 0 else 0.0
             L(f"mixture        all {sp} frac {_g(frac)}")
     L()
 
@@ -145,10 +163,10 @@ def generate(case, derived: DerivedQuantities, dt_override: float = 0.0) -> str:
         L()
 
     # ── Vibrational init ──────────────────────────────────────────────────────
-    if ph.vibrate == "discrete" and sp_ids:
+    if ph.vibrate == "discrete" and all_sp_ids:
         t_vib_init = fs.t_vib if fs.t_vib > 0 else fs.temperature
         L("# --- Discrete vibrational energy ---")
-        for sp in sp_ids:
+        for sp in all_sp_ids:
             L(f"mixture        all {sp} tvib {_g(t_vib_init)}")
         L()
 
