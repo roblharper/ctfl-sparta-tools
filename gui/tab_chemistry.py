@@ -189,10 +189,13 @@ class ChemistryTab(QWidget):
         if not chem.gas_reactions:
             from sparta_tools.chem_writer import default_gas_reactions
             for r in default_gas_reactions():
-                chem.gas_reactions.append(GasReaction(**{
-                    k: v for k, v in r.items() if k != "enabled"
-                }))
-                chem.gas_reactions[-1].enabled = r["enabled"]
+                chem.gas_reactions.append(GasReaction(
+                    reaction=r["reaction"],
+                    rxn_type=r["type"],
+                    style=r["style"],
+                    C1=r["C1"], C2=r["C2"], C3=r["C3"], C4=r["C4"], C5=r["C5"],
+                    enabled=r["enabled"],
+                ))
 
         if not chem.surf_reactions:
             from sparta_tools.chem_writer import default_surf_reactions
@@ -379,9 +382,13 @@ class ChemistryTab(QWidget):
         chem = self.bus.state.chemistry
         chem.gas_reactions = []
         for r in default_gas_reactions():
-            gr = GasReaction(**{k: v for k, v in r.items() if k != "enabled"})
-            gr.enabled = r["enabled"]
-            chem.gas_reactions.append(gr)
+            chem.gas_reactions.append(GasReaction(
+                reaction=r["reaction"],
+                rxn_type=r["type"],
+                style=r["style"],
+                C1=r["C1"], C2=r["C2"], C3=r["C3"], C4=r["C4"], C5=r["C5"],
+                enabled=r["enabled"],
+            ))
         self._loading = True
         self.gas_table.blockSignals(True)
         self.gas_table.setRowCount(0)
