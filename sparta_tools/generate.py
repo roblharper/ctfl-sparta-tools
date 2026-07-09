@@ -104,7 +104,6 @@ def generate(case, derived: DerivedQuantities, dt_override: float = 0.0) -> str:
     # ── Global ────────────────────────────────────────────────────────────────
     L("# --- Global parameters ---")
     L(f"global         nrho {_s(n_free)} fnum {_s(fnum)} gridcut 0.0")
-    L(f"global         vstream {_g(fs.velocity)} 0 0 temp {_g(fs.temperature)}")
     L()
 
     # ── Timestep ──────────────────────────────────────────────────────────────
@@ -119,16 +118,11 @@ def generate(case, derived: DerivedQuantities, dt_override: float = 0.0) -> str:
         # Declare ALL possible species (inflow + reaction products)
         L(f"species        {sp_file_base} {' '.join(all_sp_ids)}")
         L()
-        # mixture global: set bulk properties using inflow species only
-        mix_parts = [f"mixture        all {' '.join(all_sp_ids)}",
-                     f"nrho {_s(n_free)}",
-                     f"vstream {_g(fs.velocity)} 0 0",
-                     f"temp {_g(fs.temperature)}"]
-        if ph.vibrate == "discrete" and fs.t_vib > 0:
-            mix_parts.append(f"tvib {_g(fs.t_vib)}")
-        L(" ".join(mix_parts))
+        # mixture: define the 'all' group, then set global freestream properties
+        L(f"mixture        all {' '.join(all_sp_ids)}")
+        L(f"mixture        all nrho {_s(n_free)} vstream {_g(fs.velocity)} 0 0 temp {_g(fs.temperature)}")
         L()
-        # Set mole fractions — inflow species get their fractions, products get 0
+        # Per-species mole fractions (products get 0, will be populated by reactions)
         for sp in all_sp_ids:
             frac = case.species_dict.get(sp, 0.0) / total_frac if total_frac > 0 else 0.0
             L(f"mixture        all {sp} frac {_g(frac)}")
@@ -152,21 +146,32 @@ def generate(case, derived: DerivedQuantities, dt_override: float = 0.0) -> str:
         coll_base = "collision.vss"
         relax_kw = "variable" if ph.rot_relax_model == "parker" else "constant"
         L("# --- Collision model ---")
-        L(f"collide        vss all {coll_base} relax {relax_kw} vibmodel {ph.vib_relax_model}")
-        L()
-        cm_parts = ["collide_modify",
-                    f"rotate {'no' if ph.rotate == 'no' else ph.rotate}",
-                    f"vibrate {'no' if ph.vibrate == 'no' else ph.vibrate}"]
+        # collide: VSS model; usecelltemperature is a keyword on this command
+        collide_parts = [f"collide        vss all {coll_base}"]
         if ph.use_cell_temperature:
-            cm_parts.append("usecelltemperature yes")
-        L(" ".join(cm_parts))
+            collide_parts.append("usecelltemperature yes")
+        L(" ".join(collide_parts))
+        L()
+        # rotate and vibrate are standalone commands
+        if ph.rotate != "no":
+            L(f"rotate         {ph.rotate}")
+        else:
+            L("rotate         no")
+        if ph.vibrate != "no":
+            L(f"vibrate        {ph.vibrate}")
+        else:
+            L("vibrate        no")
+        # collide_modify: rotational/vibrational relaxation models
+        L(f"collide_modify rotate {relax_kw} vibrate {ph.vib_relax_model}")
         L()
 
     # ── Vibrational init ──────────────────────────────────────────────────────
-    if ph.vibrate == "discrete" and all_sp_ids:
+    # tvib is set per-species via mixture; only set for inflow species with
+    # non-zero initial fraction (product species start with 0 particles anyway)
+    if ph.vibrate == "discrete" and sp_ids:
         t_vib_init = fs.t_vib if fs.t_vib > 0 else fs.temperature
         L("# --- Discrete vibrational energy ---")
-        for sp in all_sp_ids:
+        for sp in sp_ids:
             L(f"mixture        all {sp} tvib {_g(t_vib_init)}")
         L()
 
@@ -210,18 +215,26 @@ def generate(case, derived: DerivedQuantities, dt_override: float = 0.0) -> str:
 
     compute_idx = 1
     grid_compute_ids: list[str] = []
+    grid_compute_ncols: list[int] = []
 
     if base_kws:
         L(f"compute        {compute_idx} grid all all {' '.join(base_kws)}")
-        grid_compute_ids.append(str(compute_idx)); compute_idx += 1
+        grid_compute_ids.append(str(compute_idx))
+        grid_compute_ncols.append(len(base_kws))
+        compute_idx += 1
     if rot_kws and ph.rotate != "no":
         L(f"compute        {compute_idx} grid all all {' '.join(rot_kws)}")
-        grid_compute_ids.append(str(compute_idx)); compute_idx += 1
+        grid_compute_ids.append(str(compute_idx))
+        grid_compute_ncols.append(len(rot_kws))
+        compute_idx += 1
     if vib_kws and ph.vibrate != "no":
         L(f"compute        {compute_idx} grid all all {' '.join(vib_kws)}")
-        grid_compute_ids.append(str(compute_idx)); compute_idx += 1
+        grid_compute_ids.append(str(compute_idx))
+        grid_compute_ncols.append(len(vib_kws))
+        compute_idx += 1
 
     surf_compute_id = ""
+    surf_compute_ncols = 0
     if has_surf:
         _SURF_FIELDS = [
             ("surf_n", "n"), ("surf_press", "press"), ("surf_ke", "ke"),
@@ -230,20 +243,34 @@ def generate(case, derived: DerivedQuantities, dt_override: float = 0.0) -> str:
         surf_kws = [kw for attr, kw in _SURF_FIELDS if getattr(cd, attr, False)]
         if surf_kws:
             L(f"compute        {compute_idx} surf all all {' '.join(surf_kws)}")
-            surf_compute_id = str(compute_idx); compute_idx += 1
+            surf_compute_id = str(compute_idx)
+            surf_compute_ncols = len(surf_kws)
+            compute_idx += 1
     L()
+
+    def _col_refs(cid: str, ncols: int, prefix: str = "c") -> str:
+        """Expand c_N[1] c_N[2] ... c_N[ncols] — SPARTA requires explicit indices."""
+        return " ".join(f"{prefix}_{cid}[{i+1}]" for i in range(ncols))
 
     # ── Fixes ─────────────────────────────────────────────────────────────────
     L("# --- Time-averaging fixes ---")
     fix_idx = 1
     grid_fix_ids: list[str] = []
-    for cid in grid_compute_ids:
-        L(f"fix            {fix_idx} ave/grid all {nevery} {nrepeat} {nfreq} c_{cid}[*]")
-        grid_fix_ids.append(str(fix_idx)); fix_idx += 1
+    grid_fix_ncols: list[int] = []
+    for cid, ncols in zip(grid_compute_ids, grid_compute_ncols):
+        col_refs = _col_refs(cid, ncols)
+        L(f"fix            {fix_idx} ave/grid all {nevery} {nrepeat} {nfreq} {col_refs}")
+        grid_fix_ids.append(str(fix_idx))
+        grid_fix_ncols.append(ncols)
+        fix_idx += 1
     surf_fix_id = ""
+    surf_fix_ncols = 0
     if surf_compute_id:
-        L(f"fix            {fix_idx} ave/surf all {nevery} {nrepeat} {nfreq} c_{surf_compute_id}[*]")
-        surf_fix_id = str(fix_idx); fix_idx += 1
+        col_refs = _col_refs(surf_compute_id, surf_compute_ncols)
+        L(f"fix            {fix_idx} ave/surf all {nevery} {nrepeat} {nfreq} {col_refs}")
+        surf_fix_id = str(fix_idx)
+        surf_fix_ncols = surf_compute_ncols
+        fix_idx += 1
     L()
 
     # ── Stats ─────────────────────────────────────────────────────────────────
@@ -256,11 +283,15 @@ def generate(case, derived: DerivedQuantities, dt_override: float = 0.0) -> str:
     L("# --- Dumps ---")
     dump_idx = 1
     if grid_fix_ids:
-        fix_cols = " ".join(f"f_{fid}[*]" for fid in grid_fix_ids)
+        fix_cols = " ".join(
+            _col_refs(fid, ncols, "f")
+            for fid, ncols in zip(grid_fix_ids, grid_fix_ncols)
+        )
         L(f"dump           {dump_idx} grid all {nfreq} {cd.grid_dump_file} id xlo ylo zlo xhi yhi zhi {fix_cols}")
         dump_idx += 1
     if surf_fix_id:
-        L(f"dump           {dump_idx} surf all {nfreq} {cd.surf_dump_file} id f_{surf_fix_id}[*]")
+        fix_cols = _col_refs(surf_fix_id, surf_fix_ncols, "f")
+        L(f"dump           {dump_idx} surf all {nfreq} {cd.surf_dump_file} id {fix_cols}")
         dump_idx += 1
     if cd.particle_dump_enabled:
         p_nevery = cd.particle_dump_nevery if cd.particle_dump_nevery > 0 else nfreq
@@ -279,11 +310,13 @@ def generate(case, derived: DerivedQuantities, dt_override: float = 0.0) -> str:
         L(f"unfix          {surf_fix_id}")
     L()
     fix_idx = 1
-    for cid in grid_compute_ids:
-        L(f"fix            {fix_idx} ave/grid all {nevery} {nrepeat} {nfreq} c_{cid}[*]")
+    for cid, ncols in zip(grid_compute_ids, grid_compute_ncols):
+        col_refs = _col_refs(cid, ncols)
+        L(f"fix            {fix_idx} ave/grid all {nevery} {nrepeat} {nfreq} {col_refs}")
         fix_idx += 1
     if surf_compute_id:
-        L(f"fix            {fix_idx} ave/surf all {nevery} {nrepeat} {nfreq} c_{surf_compute_id}[*]")
+        col_refs = _col_refs(surf_compute_id, surf_compute_ncols)
+        L(f"fix            {fix_idx} ave/surf all {nevery} {nrepeat} {nfreq} {col_refs}")
         fix_idx += 1
     L()
     L(f"run            {prod_steps}  # production ({nrepeat} samples every {nevery} steps, output every {nfreq})")
