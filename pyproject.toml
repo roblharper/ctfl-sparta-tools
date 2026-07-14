@@ -8,8 +8,14 @@ version = "0.2.0"
 description = "CTFL SPARTA DSMC pre/post-processing tools"
 requires-python = ">=3.9"
 
+dependencies = [
+    "tomli>=1.2; python_version<'3.11'",
+]
+
 [project.optional-dependencies]
-toml = ["tomli>=1.2; python_version<'3.11'"]
+# numpy is only needed for the internal VHS curve-fit utility (_vhs_fit);
+# the core generator (case/engine/generate) runs without it.
+vhs = ["numpy>=1.20"]
 
 [project.scripts]
 sparta-tools = "sparta_tools.cli:main"
@@ -20,3 +26,8 @@ include = ["sparta_tools*"]
 
 [tool.setuptools]
 py-modules = ["species", "mixture", "flow", "shock", "dsmc", "thermo", "list_parser"]
+
+# Ship the non-Python data files (species DB, verified chemistry, provenance)
+# inside the wheel so they are available when pip-installed.
+[tool.setuptools.package-data]
+sparta_tools = ["data/*.json", "data/*.chem", "data/*.md"]

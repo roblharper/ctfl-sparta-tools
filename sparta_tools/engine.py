@@ -46,6 +46,12 @@ class DerivedQuantities:
     flow_volume: float = 0.0
     grid_dx: float = 0.0
     grid_dy: float = 0.0
+    # MFP-aware grid diagnostics
+    n_cells_x: int = 0                 # resolved streamwise cell count
+    n_cells_y: int = 0                 # resolved wall-normal cell count
+    cells_per_mfp_x: float = 0.0       # mfp_free / grid_dx  (>1 = finer than MFP)
+    cells_per_mfp_y: float = 0.0       # mfp_free / grid_dy
+    grid_warning: str = ""             # non-empty if cells are too coarse for DSMC
     collision_freqs: dict = field(default_factory=dict)
     error: str = ""
 
@@ -189,18 +195,62 @@ def compute(case, species_file: str, L_ref: float = 1.0) -> DerivedQuantities:
     box_volume = xlen * ylen * zlen
     result.flow_volume = _resolve_flow_volume(case, box_volume)
 
-    uniform_cells = geo.n_cells_x * geo.n_cells_y * (geo.n_cells_z if geo.dimension == 3 else 1)
+    # --- Resolve initial grid ------------------------------------------------
+    # Two modes:
+    #   (a) target_cells > 0 : decompose that budget into NX×NY matching the
+    #       domain aspect ratio, so cells are roughly square in physical space.
+    #   (b) otherwise         : use the explicit GridConfig.n_cells_x/y.
+    # Either way we then check cell size against the freestream MFP and record a
+    # warning if the grid is too coarse for accurate DSMC (cells should be a
+    # small multiple of the MFP; ideally <~1 MFP, and always < max_cells_per_mfp).
+    import math as _math
+
+    if sim.target_cells > 0 and xlen > 0 and ylen > 0:
+        aspect = xlen / ylen                       # >1 → wider than tall
+        ny = max(1, int(round(_math.sqrt(sim.target_cells / aspect))))
+        nx = max(1, int(round(sim.target_cells / ny)))
+        geo.n_cells_x, geo.n_cells_y = nx, ny
+        geo.n_cells_z = 1
+
+    nx = geo.n_cells_x
+    ny = geo.n_cells_y
+    result.n_cells_x = nx
+    result.n_cells_y = ny
+
+    uniform_cells = nx * ny * (geo.n_cells_z if geo.dimension == 3 else 1)
     result.n_cells = sim.n_cells_amr if sim.n_cells_amr > 0 else uniform_cells
     result.n_cells_uniform = uniform_cells
-    result.grid_dx = xlen / geo.n_cells_x if geo.n_cells_x > 0 else 0.0
-    result.grid_dy = ylen / geo.n_cells_y if geo.n_cells_y > 0 else 0.0
+    result.grid_dx = xlen / nx if nx > 0 else 0.0
+    result.grid_dy = ylen / ny if ny > 0 else 0.0
+
+    # MFP-resolution diagnostics + guardrail
+    if result.mfp_free > 0:
+        if result.grid_dx > 0:
+            result.cells_per_mfp_x = result.mfp_free / result.grid_dx
+        if result.grid_dy > 0:
+            result.cells_per_mfp_y = result.mfp_free / result.grid_dy
+        dx_mfp = result.grid_dx / result.mfp_free if result.mfp_free else 0.0
+        dy_mfp = result.grid_dy / result.mfp_free if result.mfp_free else 0.0
+        worst = max(dx_mfp, dy_mfp)
+        if worst > sim.max_cells_per_mfp:
+            result.grid_warning = (
+                f"Initial cell size is {worst:.1f}× the freestream MFP "
+                f"(dx={dx_mfp:.1f} MFP, dy={dy_mfp:.1f} MFP); recommended < "
+                f"{sim.max_cells_per_mfp:.0f}. Increase target_cells or rely on AMR "
+                f"to refine the shock region."
+            )
 
     if sim.fnum_override > 0:
         result.fnum = sim.fnum_override
     elif result.n_cells > 0 and result.flow_volume > 0:
         result.fnum = (flow_free.n * result.flow_volume) / (result.n_cells * sim.n_ppc)
 
-    prod_steps = sim.ave_nevery * sim.ave_nrepeat
+    # Enforce the block-average coupling: window == freq * samples.
+    # If window is unset (0) it is derived; if set inconsistently it is corrected
+    # so the ave/grid statistics remain a clean, non-overlapping block average.
+    if sim.window <= 0 or sim.window != sim.freq * sim.samples:
+        sim.window = sim.freq * sim.samples
+    prod_steps = sim.window
     if fs.velocity > 0 and xlen > 0 and result.dt_recommended > 0:
         result.flow_through_time = xlen / fs.velocity
         fts = max(1, int(result.flow_through_time / result.dt_recommended))

@@ -17,6 +17,35 @@ import os
 
 _R = 8.314  # J/(mol·K)
 
+# Directory holding library-shipped data (verified chemistry files, etc.)
+_DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+
+# Named gas-phase reaction sets shipped with the library.  Each maps to a
+# ready-to-use SPARTA TCE .chem file and the species those reactions require.
+# The air_carbon set is the verified 12-species air-carbon model (Park 1993 /
+# Alba 2015); see sparta_tools/data/blottner_air_carbon.md for provenance.
+GAS_REACTION_SETS = {
+    "air_carbon": {
+        "file": os.path.join(_DATA_DIR, "air_carbon_12sp.chem"),
+        "species": ["N2", "O2", "NO", "N", "O", "C", "C2", "C3", "CN", "CO2", "CO"],
+        "description": "12-species air-carbon (Park 1993 / Alba 2015), 189 reactions",
+    },
+}
+
+
+def gas_reaction_set(name: str) -> dict:
+    """Return metadata for a named shipped reaction set (see GAS_REACTION_SETS)."""
+    if name not in GAS_REACTION_SETS:
+        raise KeyError(f"Unknown reaction set '{name}'. "
+                       f"Available: {sorted(GAS_REACTION_SETS)}")
+    return GAS_REACTION_SETS[name]
+
+
+def read_gas_reaction_set(name: str) -> str:
+    """Return the full text of a shipped reaction-set .chem file."""
+    with open(gas_reaction_set(name)["file"]) as f:
+        return f.read()
+
 # ── Park 1993 11-species air TCE reactions ────────────────────────────────────
 # Each entry: (reaction_str, type, style, dof, Ea_J, A_m3s, b, dE_J)
 # Source: air11species.chem
@@ -152,6 +181,21 @@ _PARK_CARBON_SURF: list[dict] = [
         "reaction": "N --> CN",
         "type": "E",
         "gamma": 0.003,
+        "E_kJ": 0.0,
+        "delta_E": 0.0,
+    },
+    # NOTE on P4 (sublimation, 3(s)+3C(b) → C3 + 3(s), gamma=1.0, E=775.81 kJ/mol):
+    # This reaction has NO gas-phase reactant — it is a spontaneous surface carbon
+    # flux, not a collision-triggered event.  The SPARTA `surf_react prob` style
+    # requires exactly one gas reactant per reaction, so P4 CANNOT be expressed
+    # here.  Sublimation must instead be modelled with a surface emission source
+    # (e.g. `fix emit/surf`) and is intentionally omitted from this set.
+    {
+        "label": "P5",
+        "comment": "C3 + 3(s) → 3(s) + 3C(b)  Condensation (C3 absorbed by surface)",
+        "reaction": "C3 --> NULL",
+        "type": "R",              # recombination: 1 reactant, product NULL
+        "gamma": 0.10,
         "E_kJ": 0.0,
         "delta_E": 0.0,
     },

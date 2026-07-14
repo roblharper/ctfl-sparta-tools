@@ -20,6 +20,7 @@ from .case import (
     PhysicsConfig,
     GridConfig,
     SimConfig,
+    AMRConfig,
     ComputeDumpConfig,
 )
 from .generate import generate
@@ -32,6 +33,7 @@ __all__ = [
     "PhysicsConfig",
     "GridConfig",
     "SimConfig",
+    "AMRConfig",
     "ComputeDumpConfig",
     "generate",
 ]
