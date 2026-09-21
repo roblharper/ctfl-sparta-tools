@@ -68,17 +68,21 @@ def generate_readme(case, in_name: str, artifacts: dict) -> str:
     line("|---|---|")
     line(f"| `{in_name}` | The SPARTA input script — run this |")
     if "species" in artifacts:
-        line("| `species.list` | Per-species molecular data |")
+        line("| `species.list` | Per-species molecular data (group default) |")
     if "collision" in artifacts:
-        line("| `collision.list` | VSS collision parameters |")
+        line("| `collision.list` | VSS collision parameters (group default) |")
     if "gas_chem" in artifacts:
-        line(f"| `{_base(case.physics.react_file)}` | Gas-phase reactions (TCE) |")
-    if "wall_chem" in artifacts:
+        line(f"| `{_base(case.physics.react_file) or 'air12_sp_complete.chem'}` "
+             "| Gas-phase reactions (TCE) |")
+    if case.wall.surf_react_enabled and case.wall.surf_react_file:
         line(f"| `{_base(case.wall.surf_react_file)}` | Surface (wall) chemistry |")
     if "data_dir" in artifacts:
         line("| `data/` | Grid dump output (written during the run) |")
     if "restart_dir" in artifacts:
         line("| `restart/` | Restart checkpoint (written at steady state) |")
+    line()
+    line("The data files are the group's standard databases, copied in for you. "
+         "SPARTA ignores species not present in them, so they cover every case.")
     line()
 
     # ── How to run ────────────────────────────────────────────────────────────

@@ -12,6 +12,12 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
+# The group's canonical SPARTA data files, shipped in the package.
+_DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+DEFAULT_SPECIES_LIST = "species.list"
+DEFAULT_COLLISION_LIST = "collision.list"
+DEFAULT_CHEM_FILE = "air12_sp_complete.chem"
+
 
 # ── Sub-configs ───────────────────────────────────────────────────────────────
 
@@ -28,13 +34,11 @@ class FreestreamConfig:
 class WallConfig:
     temperature: float = 300.0
     accommodation: float = 1.0         # diffuse BC accommodation coeff
-    # --- Boundary-based wall (no surface mesh) ---
-    # When surface_file is empty and wall_boundary is set, the wall is applied
-    # to a box face via bound_modify instead of a read_surf mesh.  This is the
-    # standard approach for a 1D stagnation-line (blunt-body) approximation.
-    wall_boundary: str = ""            # "" | "xhi" | "xlo" | "yhi" | ...  (box face that is the wall)
+    # Set wall_boundary (a box face) for the 1D stagnation-line wall via
+    # bound_modify; leave it empty when a surface mesh carries the wall.
+    wall_boundary: str = ""            # "" | "xhi" | "xlo" | "yhi" | ...
     surf_collide_id: str = "wall"      # name used in surf_collide / bound_modify
-    # --- Surface chemistry (carbon ablation etc.) ---
+    # Surface chemistry (carbon ablation etc.)
     surf_react_enabled: bool = False
     surf_react_file: str = ""          # prob-style file, e.g. "wall.chem"
     surf_react_id: str = "wall"        # name used in surf_react / bound_modify
@@ -56,8 +60,7 @@ class PhysicsConfig:
     mgds_collide: bool = True                # CTFL MGDS collision algorithm
     # Reactions
     react_enabled: bool = False
-    react_file: str = ""               # output filename for the generated chem file
-    react_set: str = "air_carbon"      # shipped reaction set (see chem_writer.GAS_REACTION_SETS)
+    react_file: str = ""               # user-supplied chem file referenced by `react`
     react_style: str = "tce"           # "tce" | "qk"
     react_modify_partial_energy: Optional[bool] = None  # None = omit react_modify line
 
@@ -88,18 +91,8 @@ class GridConfig:
 class SimConfig:
     n_ppc: int = 20
     warmup_factor: float = 5.0
-    # --- Time-averaging statistics (deliberately coupled) ---
-    # DSMC grid statistics are gathered as a single, consistent block average so
-    # that every field (density, velocity, temperatures, Kn) is averaged the same
-    # way.  SPARTA's `fix ave/grid Nevery Nrepeat Nfreq` maps to:
-    #     freq    = Nevery  → take a sample every `freq` steps
-    #     samples = Nrepeat → number of samples per output
-    #     window  = Nfreq   → output (and reset) every `window` steps
-    # For a correct, non-overlapping block average these MUST satisfy
-    #     window == freq * samples
-    # which is enforced in the engine.  Change these together and with intent:
-    # more `samples` → lower statistical scatter; larger `freq` → less temporal
-    # correlation between samples (more independent statistics).
+    # fix ave/grid is a block average; the engine enforces window == freq*samples
+    # so samples never overlap. Change freq/samples together, not window.
     freq: int = 5                       # Nevery  — sample interval (steps)
     samples: int = 5000                 # Nrepeat — samples per window
     window: int = 0                     # Nfreq   — 0 = auto (= freq * samples)
@@ -108,14 +101,11 @@ class SimConfig:
     flow_volume_mode: str = "auto"      # "auto" | "sparta" | "computed"
     flow_volume_sparta: float = 0.0
     n_cells_amr: int = 0               # 0 = use uniform n_cells_x*y*z
-    # --- MFP-aware initial grid ---
-    # If target_cells > 0, the initial NX×NY is computed from this budget and the
-    # domain aspect ratio (NOT from GridConfig.n_cells_x/y), then checked against
-    # the freestream mean free path.  This keeps the starting grid physically
-    # sensible for DSMC even before AMR refines it.
+    # target_cells>0 sizes the initial NX×NY from this budget + domain aspect
+    # ratio (overriding n_cells_x/y), then MFP-checks it.
     target_cells: int = 0              # 0 = use explicit GridConfig.n_cells_x/y
     max_cells_per_mfp: float = 3.0     # warn if a cell edge exceeds this × MFP
-    # --- Inflow (freestream injection) ---
+    # Inflow (freestream injection)
     inflow_enabled: bool = True        # fix emit/face + create_particles n 0
     inflow_face: str = "xlo"           # box face the freestream enters through
     inflow_mixture: str = "air"        # mixture name to emit
@@ -127,16 +117,11 @@ class SimConfig:
 class AMRConfig:
     """Adaptive mesh refinement + steady-state detection loop.
 
-    The generated run loop advances one averaging window at a time, tracking the
-    block-averaged particle count.  When the relative change falls below `np_tol`
-    the flow is considered steady: the grid is refined once using the per-cell
-    Knudsen number, re-balanced, and (if enabled) a restart file is written.  The
-    loop then continues so the refined grid can re-converge, up to `max_iter`
-    windows.
-
-    For non-experts: leave these defaults.  If the shock looks under-resolved,
-    lower `kn_refine_below` (refine more aggressively); if the run is too slow,
-    raise `np_tol` (declare steady state sooner).
+    The run loop advances one averaging window at a time; when the relative
+    change in particle count drops below `np_tol` it refines on the per-cell
+    Knudsen number, re-balances, and writes a restart. Non-experts: keep the
+    defaults; lower `kn_refine_below` to refine harder, raise `np_tol` to stop
+    sooner.
     """
     enabled: bool = True
     max_iter: int = 20                 # hard cap on steady-state windows
@@ -171,10 +156,8 @@ class ComputeDumpConfig:
     surf_erot: bool = True
     surf_evib: bool = True
     surf_etot: bool = True
-    # --- Named-compute mode (1D axisymmetric / stagnation-line style) ---
-    # When True, generate.py emits physically-named computes/fixes
-    # (gridprops, Tt, Tr, Tv, nrho_sp, kn) instead of numbered ones, using
-    # thermal/grid for translational temperature and lambda/grid for Knudsen.
+    # named_ids emits physically-named computes (gridprops, Tt, Tr, Tv, nrho_sp,
+    # kn) for the 1D stagnation-line style instead of numbered ones.
     named_ids: bool = True
     thermal_temp: bool = True           # use thermal/grid (drift-subtracted) for T_tr
     per_species_nrho: bool = True       # compute nrho per species (grid all species nrho)
@@ -196,37 +179,9 @@ class ComputeDumpConfig:
 class SPARTACase:
     """A fully-specified SPARTA DSMC case.
 
-    Parameters
-    ----------
-    name : str
-        Case identifier (used in the header comment and output filenames).
-    species : dict[str, float]
-        Species name → mole fraction.  Need not sum to 1; normalised internally.
-    velocity, temperature, density, pressure
-        Freestream conditions.  Provide any two of density/pressure/temperature.
-    domain : tuple of 6 floats  (xlo, xhi, ylo, yhi, zlo, zhi)
-        Box bounds in metres.
-    grid : tuple of 3 ints  (nx, ny, nz)
-        Uniform cell counts.
-    surface_file : str, optional
-        Path to a SPARTA .surf / STL / TIFF surface file.
-    species_file : str, optional
-        Path to species.json database.  Auto-detected from repo root if omitted.
-    freestream, wall, physics, sim, compute_dump
-        Sub-config dataclass instances for fine-grained control.
-
-    Examples
-    --------
-    >>> case = SPARTACase(
-    ...     name="cyl_run",
-    ...     species={"N2": 0.79, "O2": 0.21},
-    ...     velocity=3000, temperature=200, density=1e-4,
-    ...     domain=(-0.034, 0.0, 0.0, 0.04, -1e-4, 1e-4),
-    ...     grid=(170, 200, 1),
-    ...     surface_file="quarter_cylinder.surf",
-    ... )
-    >>> case.write("cyl_run.in")
-    >>> print(f"Mach {case.derived.mach:.2f}, fnum {case.derived.fnum:.3e}")
+    Provide freestream conditions (any two of density/pressure/temperature), the
+    box `domain`, `grid` counts, and either a `surface_file` (mesh mode) or a
+    `wall.wall_boundary` (1D stagnation-line mode).  See examples/ for usage.
     """
 
     def __init__(
@@ -350,134 +305,37 @@ class SPARTACase:
         out_dir: str = ".",
         *,
         in_filename: str = "",
-        write_species: bool = True,
-        write_collision: bool = True,
-        write_gas_chem: bool = False,
-        write_wall_chem: bool = False,
-        gas_reactions: Optional[list] = None,
-        surf_reactions: Optional[list] = None,
-        species_overrides: Optional[dict] = None,
-        collision_overrides: Optional[dict] = None,
         make_data_dir: bool = True,
         make_restart_dir: bool = True,
         write_readme: bool = True,
-        overwrite: bool = False,
         dt_override: float = 0.0,
     ) -> dict:
-        """Write a complete, ready-to-run SPARTA case package to *out_dir*.
+        """Write the .in script, output dirs, summary, and README to *out_dir*.
 
-        Emits everything a non-expert needs to upload to an HPC/local machine
-        and run:  the input script, species/collision data files, optional
-        chemistry files, the data/ and restart/ output directories, and a
-        plain-language README covering how to run and check convergence.
-
-        By default *out_dir* is the current directory (where the script is run
-        from).  Pass any path to redirect.
-
-        Parameters
-        ----------
-        out_dir : str
-            Destination directory (created if missing).  Defaults to ".".
-        in_filename : str
-            Name of the SPARTA input file.  Defaults to "<name>.in".
-        write_species, write_collision : bool
-            Generate species.list / collision.list from the species database.
-        write_gas_chem : bool
-            Generate the gas-phase TCE chemistry file.  If False, the user is
-            expected to supply the file named in physics.react_file.
-        write_wall_chem : bool
-            Generate the surface chemistry file (evaluated at wall temperature).
-            If False, the user supplies the file named in wall.surf_react_file.
-        gas_reactions, surf_reactions : list, optional
-            Reaction dicts; default to the built-in Park air / carbon sets.
-        species_overrides, collision_overrides : dict, optional
-            Per-species / per-pair parameter overrides for the data files.
-        make_data_dir, make_restart_dir : bool
-            Create the output directories referenced by the dump / restart cmds.
-        write_readme : bool
-            Emit README.md with run + convergence instructions.
-
-        Returns
-        -------
-        dict
-            Mapping of artifact name → written path.
+        Returns a map of artifact name → path. Species/collision/chem files are
+        not written; SPARTA's default databases are supplied alongside the run.
         """
         out = os.path.abspath(out_dir)
         os.makedirs(out, exist_ok=True)
         written: dict[str, str] = {}
 
-        def _skip_existing(path: str) -> bool:
-            """True if we must NOT write (file exists and overwrite disabled)."""
-            return (not overwrite) and os.path.isfile(path)
-
-        # --- Input script (always regenerated) ---
         in_name = in_filename or f"{self.name}.in"
         in_path = os.path.join(out, in_name)
         self.write(in_path, dt_override=dt_override)
         written["input"] = in_path
 
-        # Full species list = declared inflow + reaction products
-        all_species = list(self.species_dict.keys()) + [
-            s for s in self.extra_species if s not in self.species_dict
-        ]
-
-        # --- Species / collision data files (never clobber user files) ---
-        if write_species and self.species_file:
-            from .species_writer import write_species_file
-            p = os.path.join(out, "species.list")
-            if _skip_existing(p):
-                written["species"] = p + "  (kept)"
-            else:
-                write_species_file(all_species, self.species_file,
-                                   species_overrides, out_path=p)
-                written["species"] = p
-
-        if write_collision and self.species_file:
-            from .species_writer import write_collision_file
-            p = os.path.join(out, "collision.list")
-            if _skip_existing(p):
-                written["collision"] = p + "  (kept)"
-            else:
-                # relax variable → 11-field format; must match the collide command
-                relax_var = (self.physics.rot_relax_model == "parker"
-                             or bool(self.physics.vib_relax_model))
-                write_collision_file(all_species, self.species_file,
-                                     collision_overrides, out_path=p,
-                                     relax_variable=relax_var)
-                written["collision"] = p
-
-        # --- Gas-phase chemistry ---
-        if write_gas_chem and self.physics.react_enabled:
-            from . import chem_writer as _cw
-            chem_name = os.path.basename(self.physics.react_file) or "air.chem"
-            p = os.path.join(out, chem_name)
-            if _skip_existing(p):
-                written["gas_chem"] = p + "  (kept)"
-            elif gas_reactions is not None:
-                # explicit reaction list overrides the shipped set
-                _cw.write_tce_chem_file(gas_reactions, out_path=p, header=self.name)
-                written["gas_chem"] = p
-            elif self.physics.react_set in _cw.GAS_REACTION_SETS:
-                # copy the verified shipped reaction file verbatim
-                with open(p, "w") as f:
-                    f.write(_cw.read_gas_reaction_set(self.physics.react_set))
-                written["gas_chem"] = p
-            else:
-                _cw.write_tce_chem_file(_cw.default_gas_reactions(),
-                                        out_path=p, header=self.name)
-                written["gas_chem"] = p
-
-        # --- Surface chemistry ---
-        if write_wall_chem and self.wall.surf_react_enabled:
-            from .chem_writer import write_surf_chem_file, default_surf_reactions
-            rxns = surf_reactions if surf_reactions is not None else default_surf_reactions()
-            wall_name = os.path.basename(self.wall.surf_react_file) or "wall.chem"
-            p = os.path.join(out, wall_name)
-            if _skip_existing(p):
-                written["wall_chem"] = p + "  (kept)"
-            else:
-                write_surf_chem_file(rxns, self.wall.temperature, out_path=p, header=self.name)
-                written["wall_chem"] = p
+        # Copy the group's canonical data files so the case is self-contained;
+        # the .in references these by name (species.list, collision.list, chem).
+        import shutil
+        for key, name in (("species", DEFAULT_SPECIES_LIST),
+                          ("collision", DEFAULT_COLLISION_LIST)):
+            shutil.copyfile(os.path.join(_DATA_DIR, name), os.path.join(out, name))
+            written[key] = os.path.join(out, name)
+        if self.physics.react_enabled:
+            chem = os.path.basename(self.physics.react_file) or DEFAULT_CHEM_FILE
+            shutil.copyfile(os.path.join(_DATA_DIR, DEFAULT_CHEM_FILE),
+                            os.path.join(out, chem))
+            written["gas_chem"] = os.path.join(out, chem)
 
         # --- Output directories referenced by the script ---
         if make_data_dir:
@@ -498,13 +356,11 @@ class SPARTACase:
                 os.makedirs(d, exist_ok=True)
                 written["restart_dir"] = d
 
-        # --- Derived-quantities summary log (nothing hidden) ---
         sp = os.path.join(out, f"{self.name}.summary.txt")
         with open(sp, "w") as f:
             f.write(self.summary(full=True))
         written["summary"] = sp
 
-        # --- README ---
         if write_readme:
             p = os.path.join(out, "README.md")
             with open(p, "w") as f:
@@ -518,12 +374,8 @@ class SPARTACase:
         return generate_readme(self, in_name, artifacts)
 
     def summary(self, full: bool = False) -> str:
-        """Return a human-readable summary of derived quantities.
-
-        full=True adds grid resolution (in MFP units), the DSMC parameters, the
-        averaging statistics block, and any grid-resolution warning — intended
-        for the ``*.summary.txt`` log so nothing is hidden from a curious user.
-        """
+        """Human-readable derived-quantities summary; full=True adds the grid,
+        DSMC, and averaging details for the *.summary.txt log."""
         d = self._derived
         if d.error:
             return f"Error: {d.error}"

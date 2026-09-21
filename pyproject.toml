@@ -27,7 +27,8 @@ include = ["sparta_tools*"]
 [tool.setuptools]
 py-modules = ["species", "mixture", "flow", "shock", "dsmc", "thermo", "list_parser"]
 
-# Ship the non-Python data files (species DB, verified chemistry, provenance)
-# inside the wheel so they are available when pip-installed.
+# Ship the species DB (for the compute engine) plus the group's default SPARTA
+# data files (species.list, collision.list, air chemistry) so a generated case
+# is self-contained without a network or a separate download.
 [tool.setuptools.package-data]
-sparta_tools = ["data/*.json", "data/*.chem", "data/*.md"]
+sparta_tools = ["data/*.json", "data/*.list", "data/*.chem"]

@@ -1,19 +1,8 @@
-"""SPARTA .in file generator — works with SPARTACase, no Qt dependency.
+"""SPARTA .in generator for the CTFL build (relax variable, mgdscollide, etc.).
 
-Two output modes, selected automatically:
-
-* Surface-mesh mode (``grid.surface_file`` set): reads a .surf/STL mesh and
-  applies wall models via ``surf_collide`` / ``surf_modify``.  Numbered computes.
-
-* Boundary-wall mode (``wall.wall_boundary`` set, no surface mesh): the wall is a
-  box face handled by ``bound_modify``.  This is the standard 1D axisymmetric
-  stagnation-line (blunt-body) approximation.  Uses physically-named computes
-  (gridprops, Tt, Tr, Tv, nrho_sp, kn), a ``thermal/grid`` temperature, a
-  ``lambda/grid`` Knudsen field, and an AMR steady-state run loop.
-
-CTFL group SPARTA extensions (see AdditionalCommands.readme) are emitted on the
-``collide`` / ``collide_modify`` lines: ``relax variable vibmodel <MODEL>``,
-``usecelltemperature``, ``parkeroff``, ``exchangestyle``, ``mgdscollide``.
+Picks one of two modes automatically: surface-mesh mode (grid.surface_file, wall
+via read_surf + surf_collide) or boundary-wall mode (wall.wall_boundary, the 1D
+stagnation-line wall via bound_modify with named computes and an AMR run loop).
 """
 
 from __future__ import annotations
@@ -36,18 +25,13 @@ def _g(v: float) -> str:
     return f"{v:.8g}"
 
 
-def generate(case, derived: DerivedQuantities, dt_override: float = 0.0) -> str:
-    """Return a complete SPARTA input script string for *case*.
+def _pair(spec: str) -> list[str]:
+    """Split a boundary spec into a [lo, hi] pair; a single char applies to both."""
+    return [spec[0], spec[1]] if len(spec) > 1 else [spec[0], spec[0]]
 
-    Parameters
-    ----------
-    case : SPARTACase
-        The fully-specified case object.
-    derived : DerivedQuantities
-        Pre-computed quantities (from case.derived or engine.compute()).
-    dt_override : float
-        If > 0, use this timestep instead of the auto-recommended value.
-    """
+
+def generate(case, derived: DerivedQuantities, dt_override: float = 0.0) -> str:
+    """Return the SPARTA input script for *case*; dt_override>0 forces the timestep."""
     lines: list[str] = []
 
     def L(text: str = ""):
@@ -74,17 +58,13 @@ def generate(case, derived: DerivedQuantities, dt_override: float = 0.0) -> str:
     nfreq   = sim.window if sim.window > 0 else sim.freq * sim.samples
     warmup  = derived.warmup_steps if derived.warmup_steps > 0 else 10000
 
-    # Inflow-declared species = every key in species_dict, in insertion order.
-    # Zero-fraction entries (e.g. NO/N/O that only appear after reactions) are
-    # kept so they are declared in the mixture; fractions are normalised over
-    # the non-zero entries only.
+    # Zero-fraction inflow species are kept so they're declared in the mixture;
+    # fractions normalise over the non-zero entries.
     sp_ids = list(case.species_dict.keys())
     total_frac = sum(f for f in case.species_dict.values() if f > 0)
 
-    # Full species set = inflow species + reaction-product species.
-    # Reaction products must be declared explicitly via case.extra_species so
-    # that the species list exactly matches the user-supplied chemistry file.
-    # (Order is preserved; duplicates of inflow species are dropped.)
+    # extra_species are reaction products, declared so the species list matches
+    # the user's chem file.
     explicit_extra = list(getattr(case, "extra_species", []) or [])
     _extra = [sp for sp in explicit_extra if sp not in sp_ids]
     all_sp_ids = sp_ids + _extra
@@ -102,10 +82,14 @@ def generate(case, derived: DerivedQuantities, dt_override: float = 0.0) -> str:
     L(f"dimension      {geo.dimension}")
     L("units          si")
 
-    bx, by, bz = geo.boundary_x, geo.boundary_y, geo.boundary_z
+    pairs = {"x": _pair(geo.boundary_x), "y": _pair(geo.boundary_y), "z": _pair(geo.boundary_z)}
     if geo.symmetry == "axisymmetric" and geo.dimension == 2:
-        by = "a" + (by[1] if len(by) > 1 else "o")
-    L(f"boundary       {bx} {by} {bz}")
+        pairs["y"][0] = "a"   # ylo is the axis of symmetry
+    if boundary_wall:
+        # bound_modify requires the wall face be a 's' (surface) boundary
+        axis, side = wall.wall_boundary[0], wall.wall_boundary[1:]
+        pairs[axis][0 if side == "lo" else 1] = "s"
+    L(f"boundary       {''.join(pairs['x'])} {''.join(pairs['y'])} {''.join(pairs['z'])}")
     L()
 
     # ── Box ──────────────────────────────────────────────────────────────────
@@ -116,9 +100,13 @@ def generate(case, derived: DerivedQuantities, dt_override: float = 0.0) -> str:
     L()
 
     # ── Global ────────────────────────────────────────────────────────────────
+    # gridcut caps ghost-cell communication so memory stays bounded; 2x the
+    # freestream MFP keeps it local while covering the interaction range.
     L("# --- Global parameters ---")
     L(f"global         nrho {_s(n_free)} fnum {_s(fnum)}")
     L(f"global         vstream {_g(fs.velocity)} 0 0 temp {_g(fs.temperature)}")
+    if derived.mfp_free > 0:
+        L(f"global         gridcut {_s(2.0 * derived.mfp_free)}")
     L()
 
     # ── Timestep ──────────────────────────────────────────────────────────────
@@ -202,7 +190,7 @@ def generate(case, derived: DerivedQuantities, dt_override: float = 0.0) -> str:
 
     # ── Gas-phase chemistry ───────────────────────────────────────────────────
     if ph.react_enabled:
-        react_file = os.path.basename(ph.react_file) if ph.react_file else "air.chem"
+        react_file = os.path.basename(ph.react_file) if ph.react_file else "air12_sp_complete.chem"
         L("# --- Chemistry ---")
         L(f"react         {ph.react_style} {react_file}")
         if ph.react_modify_partial_energy is not None:
@@ -225,7 +213,7 @@ def generate(case, derived: DerivedQuantities, dt_override: float = 0.0) -> str:
 
     # ── Computes / fixes / stats / dump ───────────────────────────────────────
     if boundary_wall and cd.named_ids:
-        _emit_named_computes(L, case, nevery, nrepeat, nfreq)
+        _emit_named_computes(L, case, nevery, nrepeat, nfreq, n_species=len(all_sp_ids))
     else:
         _emit_numbered_computes(L, case, has_surf, nevery, nrepeat, nfreq)
 
@@ -242,9 +230,30 @@ def generate(case, derived: DerivedQuantities, dt_override: float = 0.0) -> str:
 #  Named computes (boundary-wall / stagnation-line mode)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _emit_named_computes(L, case, nevery, nrepeat, nfreq):
+def _dump_ref(fix_id: str, ncols: int) -> str:
+    """Dump reference for a fix ave/grid output.
+
+    SPARTA stores a single averaged value as a per-grid vector (f_ID) and
+    multiple values as an array (f_ID[*]); mismatching the two is an error.
+    """
+    return f"f_{fix_id}[*]" if ncols > 1 else f"f_{fix_id}"
+
+
+def _emit_named_computes(L, case, nevery, nrepeat, nfreq, n_species):
     cd = case.compute_dump
     ph = case.physics
+
+    # Active grid quantities: (id, compute definition, column count).
+    grids = [("gridprops", "grid all all n nrho u v", 4)]
+    if cd.thermal_temp:
+        grids.append(("Tt", "thermal/grid all all temp", 1))
+    if cd.grid_trot and ph.rotate != "no":
+        grids.append(("Tr", "grid all all trot", 1))
+    if cd.grid_tvib and ph.vibrate != "no":
+        grids.append(("Tv", "grid all all tvib", 1))
+    if cd.per_species_nrho:
+        grids.append(("nrho_sp", "grid all species nrho", n_species))
+    have_kn = cd.knudsen and cd.per_species_nrho and cd.thermal_temp
 
     L("# --- Averaging window variables ---")
     L(f"variable       window  equal {nfreq}")
@@ -253,30 +262,18 @@ def _emit_named_computes(L, case, nevery, nrepeat, nfreq):
     L()
 
     L("# --- Computes ---")
-    L("compute        gridprops grid all all n nrho u v")
-    if cd.thermal_temp:
-        L("compute        Tt        thermal/grid all all temp")
-    if cd.grid_trot and ph.rotate != "no":
-        L("compute        Tr        grid all all trot")
-    if cd.grid_tvib and ph.vibrate != "no":
-        L("compute        Tv        grid all all tvib")
-    if cd.per_species_nrho:
-        L("compute        nrho_sp   grid all species nrho")
-    if cd.knudsen and cd.per_species_nrho and cd.thermal_temp:
+    for cid, defn, _ in grids:
+        L(f"compute        {cid:<9s} {defn}")
+    if have_kn:
         L("compute        kn        lambda/grid c_nrho_sp[*] c_Tt[1] lambda knall")
     L()
 
+    # compute grid/thermal/grid always produce an array, so the fix input is
+    # always indexed (c_ID[*]); only the fix *output* collapses to a vector.
     L("# --- Time-averaging fixes ---")
-    L("fix            gridprops ave/grid all ${freq} ${samples} ${window} c_gridprops[*]")
-    if cd.thermal_temp:
-        L("fix            Tt        ave/grid all ${freq} ${samples} ${window} c_Tt[*]")
-    if cd.grid_trot and ph.rotate != "no":
-        L("fix            Tr        ave/grid all ${freq} ${samples} ${window} c_Tr[*]")
-    if cd.grid_tvib and ph.vibrate != "no":
-        L("fix            Tv        ave/grid all ${freq} ${samples} ${window} c_Tv[*]")
-    if cd.per_species_nrho:
-        L("fix            nrho_sp   ave/grid all ${freq} ${samples} ${window} c_nrho_sp[*] ave one")
-    if cd.knudsen and cd.per_species_nrho and cd.thermal_temp:
+    for cid, _, _ in grids:
+        L(f"fix            {cid:<9s} ave/grid all ${{freq}} ${{samples}} ${{window}} c_{cid}[*] ave one")
+    if have_kn:
         L("fix            kn        ave/grid all ${freq} ${samples} ${window} c_kn[2] ave one")
     L()
 
@@ -285,21 +282,10 @@ def _emit_named_computes(L, case, nevery, nrepeat, nfreq):
     L(f"stats_style    {cd.stats_fields}")
     L()
 
-    # Build the dump field list from whichever fixes we emitted
-    dump_fields = ["f_gridprops[*]"]
-    if cd.thermal_temp:
-        dump_fields.append("f_Tt[*]")
-    if cd.grid_trot and ph.rotate != "no":
-        dump_fields.append("f_Tr[*]")
-    if cd.grid_tvib and ph.vibrate != "no":
-        dump_fields.append("f_Tv[*]")
-    if cd.per_species_nrho:
-        dump_fields.append("f_nrho_sp[*]")
-
     geom = "id xlo ylo xhi yhi " if cd.dump_geometry else "id "
+    dump_fields = " ".join(_dump_ref(cid, ncols) for cid, _, ncols in grids)
     L("# --- Dumps ---")
-    L(f"dump           1 grid all ${{window}} {cd.grid_dump_file} "
-      f"{geom}{' '.join(dump_fields)}")
+    L(f"dump           1 grid all ${{window}} {cd.grid_dump_file} {geom}{dump_fields}")
     L()
 
 
@@ -376,7 +362,8 @@ def _emit_numbered_computes(L, case, has_surf, nevery, nrepeat, nfreq):
 
     L("# --- Dumps ---")
     if grid_ids:
-        cols = " ".join(_col_refs(fid, nc, "f") for fid, nc in zip(range(1, len(grid_ids) + 1), grid_ncols))
+        cols = " ".join(_dump_ref(str(fid), nc)
+                        for fid, nc in zip(range(1, len(grid_ids) + 1), grid_ncols))
         geom = "id xlo ylo zlo xhi yhi zhi " if cd.dump_geometry else "id "
         L(f"dump           1 grid all {nfreq} {cd.grid_dump_file} {geom}{cols}")
     L()

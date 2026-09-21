@@ -33,6 +33,7 @@ env/
 # Case-specific files — not part of the library
 *.toml
 !pyproject.toml
+!examples/*.toml
 theory_runs.py
 cyl_case_heatflux.py
 cyl_case_og_cond.py

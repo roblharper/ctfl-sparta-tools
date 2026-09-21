@@ -1,0 +1,32 @@
+# 1D axisymmetric stagnation-line case for the CLI:
+#   sparta-tools gen examples/reentry_1d.toml -o reentry_1d.in
+#   sparta-tools info examples/reentry_1d.toml          # derived quantities only
+name = "reentry_1d"
+extra_species = ["NO", "N", "O"]
+
+[species]
+N2 = 0.79
+O2 = 0.21
+
+[freestream]
+velocity = 4236.0
+temperature = 634.0
+density = 1.57e-3
+
+[wall]
+temperature = 1626.0
+wall_boundary = "xhi"
+
+[geometry]
+dimension = 2
+symmetry = "axisymmetric"
+xlo = -0.034
+xhi = 0.0
+ylo = 0.0
+yhi = 0.04
+n_cells_x = 200
+n_cells_y = 200
+
+[physics]
+react_enabled = true
+react_file = "air12_sp_complete.chem"
