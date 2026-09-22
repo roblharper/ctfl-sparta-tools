@@ -18,6 +18,15 @@ DEFAULT_SPECIES_LIST = "species.list"
 DEFAULT_COLLISION_LIST = "collision.list"
 DEFAULT_CHEM_FILE = "air12_sp_complete.chem"
 
+# Resolution presets for non-experts: standard DSMC targets. mfp_per_cell sizes
+# the streamwise grid from the freestream MFP; ppc, warmup, and samples scale up
+# with fidelity. AMR then refines the shock below these baselines.
+RESOLUTION_PRESETS = {
+    "coarse": dict(mfp_per_cell=4.0, n_ppc=15, warmup_factor=15.0, samples=4000),
+    "medium": dict(mfp_per_cell=2.0, n_ppc=30, warmup_factor=25.0, samples=8000),
+    "fine":   dict(mfp_per_cell=1.0, n_ppc=60, warmup_factor=40.0, samples=16000),
+}
+
 
 # ── Sub-configs ───────────────────────────────────────────────────────────────
 
@@ -206,6 +215,7 @@ class SPARTACase:
         boundary_z: str = "p",
         species_file: str = "",
         extra_species: Optional[list] = None,
+        resolution: str = "",              # "coarse"|"medium"|"fine": sets grid+ppc
         # sub-configs (override everything above if supplied)
         freestream: Optional[FreestreamConfig] = None,
         wall: Optional[WallConfig] = None,
@@ -268,6 +278,28 @@ class SPARTACase:
         self._derived = None
         self._compute()
 
+        # A resolution preset sizes the streamwise grid from the freestream MFP
+        # and sets ppc/warmup/samples, then recomputes. Done after the first
+        # compute because it needs the MFP.
+        if resolution:
+            self._apply_resolution(resolution)
+
+    def _apply_resolution(self, level: str):
+        """Size the grid + sampling from a coarse/medium/fine preset."""
+        if level not in RESOLUTION_PRESETS:
+            raise ValueError(f"resolution must be one of {sorted(RESOLUTION_PRESETS)}")
+        p = RESOLUTION_PRESETS[level]
+        mfp = self._derived.mfp_free
+        if mfp > 0:
+            g = self.grid
+            cell = p["mfp_per_cell"] * mfp
+            g.n_cells_x = max(1, round(abs(g.xhi - g.xlo) / cell))
+            g.n_cells_y = max(1, round(abs(g.yhi - g.ylo) / cell))
+        self.sim.n_ppc = p["n_ppc"]
+        self.sim.warmup_factor = p["warmup_factor"]
+        self.sim.samples = p["samples"]
+        self._compute()
+
     # ── Compute ───────────────────────────────────────────────────────────────
 
     def _compute(self):
@@ -324,6 +356,16 @@ class SPARTACase:
         self.write(in_path, dt_override=dt_override)
         written["input"] = in_path
 
+        # Companion restart script: reads the grid the main run saves
+        # (write_grid grid.adapted) and just samples — no warmup-length AMR.
+        if getattr(self, "amr", None) and self.amr.enabled and self.wall.wall_boundary:
+            from .generate import generate as _gen
+            restart_name = f"{os.path.splitext(in_name)[0]}_restart.in"
+            with open(os.path.join(out, restart_name), "w") as f:
+                f.write(_gen(self, self._derived, dt_override=dt_override,
+                             from_grid="grid.adapted"))
+            written["restart_input"] = os.path.join(out, restart_name)
+
         # Copy the group's canonical data files so the case is self-contained;
         # the .in references these by name (species.list, collision.list, chem).
         import shutil
@@ -336,6 +378,14 @@ class SPARTACase:
             shutil.copyfile(os.path.join(_DATA_DIR, DEFAULT_CHEM_FILE),
                             os.path.join(out, chem))
             written["gas_chem"] = os.path.join(out, chem)
+
+        # Surface chemistry is Arrhenius in the wall temperature, so it is
+        # generated per case rather than copied.
+        if self.wall.surf_react_enabled:
+            from .wall_chem import write_wall_chem
+            wchem = os.path.basename(self.wall.surf_react_file) or "wall.chem"
+            write_wall_chem(self.wall.temperature, os.path.join(out, wchem))
+            written["wall_chem"] = os.path.join(out, wchem)
 
         # --- Output directories referenced by the script ---
         if make_data_dir:

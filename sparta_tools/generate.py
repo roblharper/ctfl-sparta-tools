@@ -30,8 +30,13 @@ def _pair(spec: str) -> list[str]:
     return [spec[0], spec[1]] if len(spec) > 1 else [spec[0], spec[0]]
 
 
-def generate(case, derived: DerivedQuantities, dt_override: float = 0.0) -> str:
-    """Return the SPARTA input script for *case*; dt_override>0 forces the timestep."""
+def generate(case, derived: DerivedQuantities, dt_override: float = 0.0,
+             from_grid: str = "") -> str:
+    """Return the SPARTA input script for *case*; dt_override>0 forces the timestep.
+
+    from_grid: if set, read that saved grid instead of create_grid and skip the
+    AMR loop (a restart run that samples on the pre-refined grid).
+    """
     lines: list[str] = []
 
     def L(text: str = ""):
@@ -57,6 +62,10 @@ def generate(case, derived: DerivedQuantities, dt_override: float = 0.0) -> str:
     nrepeat = sim.samples
     nfreq   = sim.window if sim.window > 0 else sim.freq * sim.samples
     warmup  = derived.warmup_steps if derived.warmup_steps > 0 else 10000
+    # Round warmup up to a whole window so AMR refinement lands on a fix ave/grid
+    # output step (adapt_grid rejects a fix read at an incompatible time).
+    if nfreq > 0:
+        warmup = -(-warmup // nfreq) * nfreq
 
     # Zero-fraction inflow species are kept so they're declared in the mixture;
     # fractions normalise over the non-zero entries.
@@ -85,6 +94,10 @@ def generate(case, derived: DerivedQuantities, dt_override: float = 0.0) -> str:
     pairs = {"x": _pair(geo.boundary_x), "y": _pair(geo.boundary_y), "z": _pair(geo.boundary_z)}
     if geo.symmetry == "axisymmetric" and geo.dimension == 2:
         pairs["y"][0] = "a"   # ylo is the axis of symmetry
+        # yhi stays outflow: the decelerated stagnation gas vents radially, as it
+        # physically does spreading off the stagnation point. This is the
+        # standard stagnation-line closure and is what lets np reach steady state
+        # (the radial extent must be a real fraction of the nose radius).
     if boundary_wall:
         # bound_modify requires the wall face be a 's' (surface) boundary
         axis, side = wall.wall_boundary[0], wall.wall_boundary[1:]
@@ -95,18 +108,27 @@ def generate(case, derived: DerivedQuantities, dt_override: float = 0.0) -> str:
     # ── Box ──────────────────────────────────────────────────────────────────
     L("# --- Simulation box ---")
     L(f"create_box     {_g(geo.xlo)} {_g(geo.xhi)} {_g(geo.ylo)} {_g(geo.yhi)} {_g(geo.zlo)} {_g(geo.zhi)}")
-    L(f"create_grid    {geo.n_cells_x} {geo.n_cells_y} {geo.n_cells_z}")
+    # gridcut caps ghost-cell communication so memory stays bounded (2x the
+    # freestream MFP). It must precede create_grid/balance_grid: those build the
+    # ghost halo, and a later gridcut wipes it, breaking the run.
+    if derived.mfp_free > 0:
+        L(f"global         gridcut {_s(2.0 * derived.mfp_free)}")
+    if from_grid:
+        L(f"read_grid      {from_grid}")     # pre-refined grid; no AMR needed
+    else:
+        L(f"create_grid    {geo.n_cells_x} {geo.n_cells_y} {geo.n_cells_z}")
     L(f"balance_grid   rcb {geo.balance_mode}")
+    # Radius weighting equalizes particles/cell across radial rows so near-axis
+    # cells (tiny volume) are not starved to 1-2 particles. fnum is sized for
+    # this weighting; it holds on any x-refinement (see engine.compute).
+    if geo.symmetry == "axisymmetric" and geo.dimension == 2:
+        L("global         weight cell radius")
     L()
 
     # ── Global ────────────────────────────────────────────────────────────────
-    # gridcut caps ghost-cell communication so memory stays bounded; 2x the
-    # freestream MFP keeps it local while covering the interaction range.
     L("# --- Global parameters ---")
     L(f"global         nrho {_s(n_free)} fnum {_s(fnum)}")
     L(f"global         vstream {_g(fs.velocity)} 0 0 temp {_g(fs.temperature)}")
-    if derived.mfp_free > 0:
-        L(f"global         gridcut {_s(2.0 * derived.mfp_free)}")
     L()
 
     # ── Timestep ──────────────────────────────────────────────────────────────
@@ -218,7 +240,9 @@ def generate(case, derived: DerivedQuantities, dt_override: float = 0.0) -> str:
         _emit_numbered_computes(L, case, has_surf, nevery, nrepeat, nfreq)
 
     # ── Run ───────────────────────────────────────────────────────────────────
-    if boundary_wall and amr is not None and amr.enabled:
+    if from_grid:
+        _emit_sampling_run(L, case, warmup)          # pre-refined grid, no AMR
+    elif boundary_wall and amr is not None and amr.enabled:
         _emit_amr_run(L, case, warmup)
     else:
         _emit_simple_run(L, case, has_surf, warmup, nevery, nrepeat, nfreq)
@@ -411,16 +435,59 @@ def _emit_simple_run(L, case, has_surf, warmup, nevery, nrepeat, nfreq):
     L()
 
 
+def _emit_sampling_run(L, case, warmup):
+    """Warmup + sampling on a pre-refined grid (read_grid), no AMR.
+
+    Same wall heat-flux monitor as the AMR run so convergence is judged the same
+    way, but the grid is fixed so each window just gathers more statistics.
+    """
+    wall = case.wall
+    wall_row = {"xlo": 1, "xhi": 2, "ylo": 3, "yhi": 4}.get(wall.wall_boundary, 2)
+
+    L("# ==========================================================================")
+    L("# Warm-up on the pre-refined grid")
+    L("# ==========================================================================")
+    L()
+    L(f"run            {warmup}   # warm-up ({case.sim.warmup_factor}x flow-through time)")
+    L()
+    L("# --- Wall heat-flux monitor (watch rel_dq level off) ---")
+    L("compute        qwall boundary all etot")
+    L(f"variable       qwall_inst equal c_qwall[{wall_row}][1]")
+    L("fix            qave ave/time ${freq} ${samples} ${window} v_qwall_inst ave one")
+    L()
+    L("variable       q_prev  equal 0.0")
+    L(f"variable       ss_iter loop {case.amr.max_iter}")
+    L("label          sample-loop")
+    L("run            ${window}")
+    L("variable       q_now  equal f_qave")
+    L('variable       q_now  equal ${q_now}')
+    L('if             "${q_prev} == 0" then "variable q_prev equal ${q_now}" "next ss_iter" "jump SELF sample-loop"')
+    L("variable       q_delta equal abs(${q_now}-${q_prev})/abs(${q_prev})")
+    L('print          "Window ${ss_iter}: q_wall=${q_now}  rel_dq=${q_delta}"')
+    L("variable       q_prev delete")
+    L("variable       q_prev equal ${q_now}")
+    L("next           ss_iter")
+    L("jump           SELF sample-loop")
+    L()
+    for v in ("ss_iter", "q_prev", "q_now", "q_delta", "qwall_inst"):
+        L(f"variable       {v}  delete")
+    L("unfix          qave")
+
+
 def _emit_amr_run(L, case, warmup):
     """Warmup + steady-state detection + AMR refinement loop + restart."""
     amr  = case.amr
     sim  = case.sim
     cd   = case.compute_dump
+    wall = case.wall
     have_kn = cd.knudsen and cd.per_species_nrho and cd.thermal_temp
 
-    restart = sim.restart_file or "restart/case.restart"
-    write_restart = amr.write_restart_on_converge
-    nx, ny, nz = amr.cells_split
+    grid_file = "grid.adapted"
+    # The stagnation-line shock is a purely streamwise feature, so refine x only.
+    # Splitting the radial/out-of-plane directions adds no resolution where it
+    # matters and quadruples the particle count for the same ppc.
+    geo = case.grid
+    nx, ny, nz = amr.cells_split[0], 1, 1
 
     L("# ==========================================================================")
     L("# Warm-up run")
@@ -432,21 +499,28 @@ def _emit_amr_run(L, case, warmup):
     L("# ==========================================================================")
     L("# Steady-state detection + AMR refinement loop")
     L("#")
-    L("#   Each iteration advances one averaging window, then compares the")
-    L("#   block-averaged particle count (np) to the previous window.  When the")
-    L("#   relative change drops below np_threshold the flow is steady: refine the")
-    L("#   grid on the per-cell Knudsen number, re-balance, write a restart file,")
-    L("#   and keep sampling so the refined grid re-converges.")
+    L("#   Convergence is judged on WALL HEAT FLUX, not particle count: the total")
+    L("#   energy flux into the wall face is the physical quantity of interest")
+    L("#   (stagnation-point heating) and is far more sensitive to a still-")
+    L("#   settling shock layer than np is. Each window advances one averaging")
+    L("#   window; when the relative change in wall q drops below q_threshold the")
+    L("#   flow is steady: refine on Kn, re-balance, restart, keep sampling.")
     L("#")
-    L("#   HOW TO CHECK CONVERGENCE: watch the 'rel_delta' printed each window.")
-    L("#   Values below np_threshold mean the particle population is steady.")
+    L("#   HOW TO CHECK CONVERGENCE: watch 'rel_dq' printed each window; below")
+    L("#   q_threshold means the wall heat flux has stopped changing.")
     L("# ==========================================================================")
     L()
-    L("variable       np_inst      equal np")
-    L("fix            npave        ave/time ${freq} ${samples} ${window} v_np_inst ave one")
+    # compute boundary is a per-face array (rows XLO,XHI,YLO,YHI); the wall is
+    # xhi = row 2. etot is already normalized to an energy flux (per area/time).
+    # fix ave/time can't index a global array element directly, so route it
+    # through an equal-style variable first.
+    wall_row = {"xlo": 1, "xhi": 2, "ylo": 3, "yhi": 4}.get(wall.wall_boundary, 2)
+    L("compute        qwall boundary all etot")
+    L(f"variable       qwall_inst equal c_qwall[{wall_row}][1]")
+    L("fix            qave ave/time ${freq} ${samples} ${window} v_qwall_inst ave one")
     L()
-    L("variable       np_prev      equal 0.0")
-    L(f"variable       np_threshold equal {amr.np_tol}")
+    L("variable       q_prev      equal 0.0")
+    L(f"variable       q_threshold equal {amr.np_tol}")
     L(f"variable       amr_loops    equal {amr.n_loops}")
     L("variable       amr_done     equal 0")
     L()
@@ -456,22 +530,25 @@ def _emit_amr_run(L, case, warmup):
     L()
     L("run            ${window}")
     L()
-    L("variable       np_curr equal f_npave")
+    # Snapshot the averaged flux to a plain number so the delta divides by a
+    # fixed value, never the still-zero q_prev on the first window.
+    L("variable       q_now  equal f_qave")
+    L('variable       q_now  equal ${q_now}')
     L()
-    L("# First window: no previous value to compare against yet")
-    L('if             "${ss_iter} == 1" then                             &')
-    L('               "variable np_prev equal ${np_curr}"                &')
+    L("# First window: seed q_prev and skip the comparison (nothing to compare).")
+    L('if             "${q_prev} == 0" then                              &')
+    L('               "variable q_prev equal ${q_now}"                   &')
     L('               "next ss_iter"                                     &')
     L('               "jump SELF ss-loop"')
     L()
-    L("variable       np_delta equal abs(v_np_curr-v_np_prev)/v_np_prev")
+    L("variable       q_delta equal abs(${q_now}-${q_prev})/abs(${q_prev})")
     L()
-    L('print          "Window ${ss_iter}: np_avg=${np_curr}  rel_delta=${np_delta}  amr_done=${amr_done}"')
+    L('print          "Window ${ss_iter}: q_wall=${q_now}  rel_dq=${q_delta}  amr_done=${amr_done}"')
     L()
 
     if have_kn:
-        L("# Steady + refinement passes remaining: refine on Kn, balance, restart")
-        L('if             "${np_delta} < ${np_threshold} && ${amr_done} < ${amr_loops}" then   &')
+        L("# Steady + refinement passes remaining: refine on Kn, balance, keep sampling")
+        L('if             "${q_delta} < ${q_threshold} && ${amr_done} < ${amr_loops}" then    &')
         L("               \"print '=== Steady state at window ${ss_iter}: refining grid (pass ${amr_done}) ==='\" &")
         L(f'               "adapt_grid all refine coarsen value f_kn '
           f'{_g(amr.kn_refine_below)} {_g(amr.kn_coarsen_above)} '
@@ -479,20 +556,27 @@ def _emit_amr_run(L, case, warmup):
         L(f'               "balance_grid rcb {case.grid.balance_mode}"                          &')
         L("               \"unfix kn\"                                                          &")
         L("               \"fix kn ave/grid all ${freq} ${samples} ${window} c_kn[2] ave one\"  &")
-        if write_restart:
-            L(f'               "write_restart {restart}"                                        &')
-        L("               \"variable amr_done equal v_amr_done+1\"")
+        # Increment by expanding the current value; `v_amr_done+1` would be a
+        # self-referential formula and recurse until the stack overflows.
+        L('               "variable amr_done equal ${amr_done}+1"')
     else:
         L("# (Knudsen field disabled — no AMR refinement performed)")
     L()
-    L("variable       np_prev equal ${np_curr}")
+    L("variable       q_prev delete")
+    L("variable       q_prev equal ${q_now}")
     L()
     L("next           ss_iter")
     L("jump           SELF ss-loop")
     L()
 
+    # Save the refined grid (portable text) so a follow-up run can read_grid it
+    # and skip AMR. Not a restart binary — those are machine-specific.
+    L("# --- Save the converged, refined grid ---")
+    L(f"write_grid      {grid_file}")
+    L()
+
     L("# --- Cleanup loop variables ---")
-    for v in ("ss_iter", "np_inst", "np_prev", "np_curr", "np_delta",
-              "np_threshold", "amr_loops", "amr_done"):
+    for v in ("ss_iter", "q_prev", "q_now", "q_delta", "q_threshold",
+              "amr_loops", "amr_done", "qwall_inst"):
         L(f"variable       {v}  delete")
-    L("unfix          npave")
+    L("unfix          qave")

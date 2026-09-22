@@ -192,7 +192,13 @@ def compute(case, species_file: str, L_ref: float = 1.0) -> DerivedQuantities:
     ylen = abs(geo.yhi - geo.ylo)
     zlen = abs(geo.zhi - geo.zlo) if geo.dimension == 3 else 1.0
 
-    box_volume = xlen * ylen * zlen
+    # SPARTA revolves axisymmetric cells about y=0: V = pi*(yhi^2-ylo^2)*xlen
+    # (grid.cpp). Using the 2D unit-depth volume here makes fnum wrong by orders
+    # of magnitude, which either starves or explodes particle creation.
+    if geo.symmetry == "axisymmetric" and geo.dimension == 2:
+        box_volume = math.pi * (geo.yhi**2 - geo.ylo**2) * xlen
+    else:
+        box_volume = xlen * ylen * zlen
     result.flow_volume = _resolve_flow_volume(case, box_volume)
 
     # --- Resolve initial grid ------------------------------------------------
@@ -242,6 +248,13 @@ def compute(case, species_file: str, L_ref: float = 1.0) -> DerivedQuantities:
 
     if sim.fnum_override > 0:
         result.fnum = sim.fnum_override
+    elif geo.symmetry == "axisymmetric" and geo.dimension == 2 and ny > 0:
+        # With `global weight cell radius`, create_particles distributes particles
+        # by volume/weight = 2*pi*dy_row per cell (radius and dx cancel). So ppc is
+        # the same on any x-refinement -> one fnum works for the coarse AND refined
+        # grid. dy_row = radial extent / ny.  (verified against create_particles.cpp)
+        dy_row = (geo.yhi - geo.ylo) / ny
+        result.fnum = flow_free.n * 2.0 * math.pi * dy_row / sim.n_ppc
     elif result.n_cells > 0 and result.flow_volume > 0:
         result.fnum = (flow_free.n * result.flow_volume) / (result.n_cells * sim.n_ppc)
 

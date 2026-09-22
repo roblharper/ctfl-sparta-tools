@@ -38,3 +38,14 @@ theory_runs.py
 cyl_case_heatflux.py
 cyl_case_og_cond.py
 theory_inputs/
+
+# Generated SPARTA case packages + run outputs (regenerable; never tracked)
+/reentry_1d_cheap/
+examples/*/reentry_1d/
+*.in
+!examples/**/generate_case.py
+data/grid.*.dat
+grid.adapted
+log.*
+plots/
+*.summary.txt
