@@ -1,3 +1,15 @@
+# exchange_db.py (2026-10-31) from air12_sp_complete.chem (rewritten in place): detailed-balance exchange energies.
+#   E: Er = -dE0 (0 K reaction energy, NASA CEA); F: Er = +dE0, Ea field = backward barrier E_b = max(0, Ea_f - dE0),
+#   applied as exp(-E_b/kT) by react_tce.cpp EXCHANGEPARTITION (needs the 2026-10-31 build). C3 reactions unchanged.
+# NO + O --> N + O2        dE0   +16028 K (E Er was   +19447), F O2 + N --> NO + O        E_b    3420 K
+# N2 + O --> NO + N        dE0   +37861 K (E Er was   +38402), F NO + N --> N2 + O        E_b     541 K
+# CO + O --> C + O2        dE0   +69544 K (E Er was   +69445), F C + O2 --> CO + O        E_b       0 K  [Ea_f - dE0 = -344 K < 0: clamped]
+# CO + C --> C2 + O        dE0   +56744 K (E Er was   +58485), F C2 + O --> CO + C        E_b    1256 K
+# CO + N --> CN + O        dE0   +39111 K (E Er was   +39286), F CN + O --> CO + N        E_b       0 K  [Ea_f - dE0 = -511 K < 0: clamped]
+# N2 + C --> CN + N        dE0   +23456 K (E Er was   +23676), F CN + N --> N2 + C        E_b       0 K  [Ea_f - dE0 = -256 K < 0: clamped]
+# CN + O --> NO + C        dE0   +14406 K (E Er was   +14052), F NO + C --> CN + O        E_b     194 K
+# CN + C --> C2 + N        dE0   +17634 K (E Er was   +19198), F C2 + N --> CN + C        E_b       0 K  [Ea_f - dE0 = -4634 K < 0: clamped]
+# CO2 + O --> O2 + CO      dE0    +3914 K (E Er was    +3895), F O2 + CO --> CO2 + O      E_b   23878 K
 # 12-species air-carbon chemistry: complete reaction set
 # Includes all reactions required for conservation of mass/energy.
 # Rates from Park (1993) / Alba (2015); per-M Af values derived from
@@ -463,58 +475,58 @@ S A 0.0 0.000E+00 6.1440E-16 0.00  9.6507E-19
 # C5 sign: positive = exothermic (react.txt). Carbon: C5 = -dH from Alba heats of formation.
 # NO + O <-> N + O2   Park 1993 Table 2: C=8.4e12 cm3/mol/s, n=0, Td=19,450 K (fixed 2026-10-23: was Ea 1951 K, Af 6.98e-17); C5 = -/+Ea per MCC air5species.chem (fixed 2026-10-23, was 0)
 NO + O --> N + O2
-E A 1.0 2.685E-19 1.395E-17 0.00 -2.685E-19
+E A 1.0 2.685E-19 1.395E-17 0.00 -2.2128E-19
 O2 + N --> NO + O
-F A 1.0 0.0000E+00 1.395E-17 0.00 2.685E-19
+F A 1.0 4.7215E-20 1.395E-17 0.00 2.2128E-19
 
 # N2 + O <-> NO + N   Park 1993 Table 2: C=6.4e17 cm3/mol/s, n=-1, Td=38,400 K (fixed 2026-10-23: was Ea 3864 K, Af 1.83e-16); C5 = -/+Ea per MCC air5species.chem (fixed 2026-10-23, was 0)
 N2 + O --> NO + N
-E A 1.0 5.302E-19 1.063E-12 -1.00 -5.302E-19
+E A 1.0 5.302E-19 1.063E-12 -1.00 -5.2273E-19
 NO + N --> N2 + O
-F A 1.0 0.0000E+00 1.063E-12 -1.00 5.302E-19
+F A 1.0 7.4701E-21 1.063E-12 -1.00 5.2273E-19
 
 # CO + O <-> C + O2   Park 2001 #14: C=3.9e13 cm3/mol/s, n=-0.18, Tr=69,200 K; C5 = -dH (Alba hf; 0-D energy test 2026-10-23, was 0)
 CO + O --> C + O2
-E A 1.0 9.5541E-19 6.4761E-17 -0.18 -9.5879E-19
+E A 1.0 9.5541E-19 6.4761E-17 -0.18 -9.6016E-19
 C + O2 --> CO + O
-F A 1.0 0.0000E+00 6.4761E-17 -0.18 9.5879E-19
+F A 1.0 0.0000E+00 6.4761E-17 -0.18 9.6016E-19
 
 # CO + C <-> C2 + O   Park 2001 #13: C=2.0e17, n=-1, Tr=58,000 K; C5 = -dH (Alba hf; 0-D energy test 2026-10-23, was 0)
 CO + C --> C2 + O
-E A 1.0 8.0078E-19 3.3211E-13 -1.00 -8.0747E-19
+E A 1.0 8.0078E-19 3.3211E-13 -1.00 -7.8344E-19
 C2 + O --> CO + C
-F A 1.0 0.0000E+00 3.3211E-13 -1.00 8.0747E-19
+F A 1.0 1.7338E-20 3.3211E-13 -1.00 7.8344E-19
 
 # CO + N <-> CN + O   Park 2001 #15: C=1.0e14, n=0, Tr=38,600 K; C5 = -dH (Alba hf; 0-D energy test 2026-10-23, was 0)
 CO + N --> CN + O
-E A 1.0 5.3293E-19 1.6605E-16 0.00 -5.4240E-19
+E A 1.0 5.3293E-19 1.6605E-16 0.00 -5.3998E-19
 CN + O --> CO + N
-F A 1.0 0.0000E+00 1.6605E-16 0.00 5.4240E-19
+F A 1.0 0.0000E+00 1.6605E-16 0.00 5.3998E-19
 
 # N2 + C <-> CN + N   Park 2001 #16: C=1.1e14, n=-0.11, Tr=23,200 K; C5 = -dH (Alba hf; 0-D energy test 2026-10-23, was 0)
 N2 + C --> CN + N
-E A 1.0 3.2031E-19 1.8266E-16 -0.11 -3.2688E-19
+E A 1.0 3.2031E-19 1.8266E-16 -0.11 -3.2384E-19
 CN + N --> N2 + C
-F A 1.0 0.0000E+00 1.8266E-16 -0.11 3.2688E-19
+F A 1.0 0.0000E+00 1.8266E-16 -0.11 3.2384E-19
 
 # CN + O <-> NO + C   Park 2001 #17: C=1.6e13, n=0.10, Tr=14,600 K; C5 = -dH (Alba hf; 0-D energy test 2026-10-23, was 0)
 CN + O --> NO + C
-E A 1.0 2.0157E-19 2.6569E-17 0.10 -1.9401E-19
+E A 1.0 2.0157E-19 2.6569E-17 0.10 -1.9889E-19
 NO + C --> CN + O
-F A 1.0 0.0000E+00 2.6569E-17 0.10 1.9401E-19
+F A 1.0 2.6785E-21 2.6569E-17 0.10 1.9889E-19
 
 # CN + C <-> C2 + N   Park 2001 #18 / Alba #19: C=5.0e13, n=0, Tr=13,000 K (fixed 2026-10-23: Af was 3.3211E-13 = 2.0e17,
 #   copied from the CO + C row of 12species_air_carbon.chem; TCE prob > 1); C5 = -dH (Alba hf; 0-D energy test 2026-10-23, was 0)
 CN + C --> C2 + N
-E A 1.0 1.7948E-19 8.3027E-17 0.00 -2.6506E-19
+E A 1.0 1.7948E-19 8.3027E-17 0.00 -2.4346E-19
 C2 + N --> CN + C
-F A 1.0 0.0000E+00 8.3027E-17 0.00 2.6506E-19
+F A 1.0 0.0000E+00 8.3027E-17 0.00 2.4346E-19
 
 # CO2 + O <-> O2 + CO   Park 2001 #20 (Mars set): C=2.1e13, n=0, Tr=27,800 K; C5 = -dH (Alba hf; 0-D energy test 2026-10-23, was 0)
 CO2 + O --> O2 + CO
-E A 1.0 3.8371E-19 3.4868E-17 0.00 -5.3771E-20
+E A 1.0 3.8371E-19 3.4868E-17 0.00 -5.4033E-20
 O2 + CO --> CO2 + O
-F A 1.0 0.0000E+00 3.4868E-17 0.00 5.3771E-20
+F A 1.0 3.2968E-19 3.4868E-17 0.00 5.4033E-20
 
 # C3 + C <-> C2 + C2   Park 2001 #21: C=1.0e12 cm3/mol/s, n=0, Tr=16,400 K, written in Park's (endothermic) direction
 #   (replaced 2026-10-23: was Alba/Candler C2 + C2 -> C3 + C, C=3.0e22, Ea=0 -> Af 4.98e-8 m3/s, ~1e8 x gas-kinetic, TCE prob > 1);
