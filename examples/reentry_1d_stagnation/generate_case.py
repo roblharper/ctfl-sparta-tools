@@ -36,7 +36,7 @@ case = SPARTACase(
         surf_react_enabled=True,
         surf_react_file="wall.chem",
     ),
-    physics=PhysicsConfig(react_enabled=True, react_file="air12_sp_complete.chem"),
+    physics=PhysicsConfig(react_enabled=True, react_file="air12.chem"),
     amr=AMRConfig(n_loops=2, max_iter=16, kn_refine_below=1.0),
 )
 

@@ -29,4 +29,4 @@ n_cells_y = 200
 
 [physics]
 react_enabled = true
-react_file = "air12_sp_complete.chem"
+react_file = "air12.chem"

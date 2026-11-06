@@ -16,7 +16,7 @@ if _ROOT not in sys.path:
 _DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 DEFAULT_SPECIES_LIST = "species.list"
 DEFAULT_COLLISION_LIST = "collision.list"
-DEFAULT_CHEM_FILE = "air12_sp_complete.chem"
+DEFAULT_CHEM_FILE = "air12.chem"
 
 # Resolution presets for non-experts: standard DSMC targets. mfp_per_cell sizes
 # the streamwise grid from the freestream MFP; ppc, warmup, and samples scale up
@@ -67,11 +67,12 @@ class PhysicsConfig:
     # CTFL collide_modify extensions (see AdditionalCommands.readme)
     exchange_style: str = "doubleprohibit"   # "" | "doubleprohibit"
     mgds_collide: bool = True                # CTFL MGDS collision algorithm
+    tcellavg: int = 100                      # CTFL: time-averaged cell T in rotrel/vibrel; 0 = omit
     # Reactions
     react_enabled: bool = False
     react_file: str = ""               # user-supplied chem file referenced by `react`
     react_style: str = "tce"           # "tce" | "qk"
-    react_modify_partial_energy: Optional[bool] = None  # None = omit react_modify line
+    react_modify_partial_energy: Optional[bool] = False  # None = omit react_modify line
 
 
 @dataclass
@@ -712,6 +713,7 @@ class SPARTACase:
             f"parker_off        = {str(self.physics.parker_off).lower()}",
             f"exchange_style    = \"{self.physics.exchange_style}\"",
             f"mgds_collide      = {str(self.physics.mgds_collide).lower()}",
+            f"tcellavg          = {self.physics.tcellavg}",
             f"react_enabled     = {str(self.physics.react_enabled).lower()}",
             f"react_file        = \"{self.physics.react_file}\"",
             f"react_style       = \"{self.physics.react_style}\"",

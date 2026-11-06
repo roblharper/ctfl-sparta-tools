@@ -72,7 +72,7 @@ def generate_readme(case, in_name: str, artifacts: dict) -> str:
     if "collision" in artifacts:
         line("| `collision.list` | VSS collision parameters (group default) |")
     if "gas_chem" in artifacts:
-        line(f"| `{_base(case.physics.react_file) or 'air12_sp_complete.chem'}` "
+        line(f"| `{_base(case.physics.react_file) or 'air12.chem'}` "
              "| Gas-phase reactions (TCE) |")
     if case.wall.surf_react_enabled and case.wall.surf_react_file:
         line(f"| `{_base(case.wall.surf_react_file)}` | Surface (wall) chemistry |")

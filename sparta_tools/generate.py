@@ -199,6 +199,8 @@ def generate(case, derived: DerivedQuantities, dt_override: float = 0.0,
         if ph.exchange_style:
             cm_parts.append(f"exchangestyle {ph.exchange_style}")
         cm_parts.append(f"mgdscollide {'yes' if ph.mgds_collide else 'no'}")
+        if ph.tcellavg:
+            cm_parts.append(f"tcellavg {ph.tcellavg}")
         L(" ".join(cm_parts))
         L()
 
@@ -212,7 +214,7 @@ def generate(case, derived: DerivedQuantities, dt_override: float = 0.0,
 
     # ── Gas-phase chemistry ───────────────────────────────────────────────────
     if ph.react_enabled:
-        react_file = os.path.basename(ph.react_file) if ph.react_file else "air12_sp_complete.chem"
+        react_file = os.path.basename(ph.react_file) if ph.react_file else "air12.chem"
         L("# --- Chemistry ---")
         L(f"react         {ph.react_style} {react_file}")
         if ph.react_modify_partial_energy is not None:

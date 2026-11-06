@@ -36,7 +36,7 @@ python generate_case.py
 ```
 
 This writes a `reentry_1d/` folder containing two input scripts, the data files
-(species.list, collision.list, air12_sp_complete.chem, wall.chem — copied from
+(species.list, collision.list, air12.chem, wall.chem — copied from
 the group defaults; wall.chem is generated at the 1626 K wall temperature), and
 the `data/` output directory.
 
