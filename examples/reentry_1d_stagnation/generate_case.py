@@ -36,7 +36,8 @@ case = SPARTACase(
         surf_react_enabled=True,
         surf_react_file="wall.chem",
     ),
-    physics=PhysicsConfig(react_enabled=True, react_file="air12.chem"),
+    physics=PhysicsConfig(react_enabled=True, react_file="air12.chem",
+                          collision_params="vhs"),   # "vhs" or "vss",
     amr=AMRConfig(n_loops=2, max_iter=16, kn_refine_below=1.0),
 )
 

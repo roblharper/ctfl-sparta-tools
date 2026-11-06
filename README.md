@@ -62,8 +62,10 @@ chemistry — those are the group's fixed default databases, bundled in
 in them, so the same files cover every case. (`gen`/CLI writes only the `.in`;
 copy the three data files yourself, or use `write_package`.)
 
-The databases are the cylinder case's canonical set: VSS `collision.list` (per-pair
-fits to Wright 2005/2007 and Park 2001 collision integrals) and `air12.chem` (Alba
-2016 rates, detailed balance from NASA CEA). They cover the 11 air-carbon species
+`PhysicsConfig(collision_params=...)` picks what is written as `collision.list`:
+`"vhs"` (default, `alpha = 1`, `data/collision_vhs.list`) or `"vss"` (per-pair fits
+to Wright 2005/2007 and Park 2001 collision integrals, `data/collision.list`). The
+fnum and dt sizing follows the same choice. `air12.chem` holds Alba 2016 rates with
+detailed balance from NASA CEA. The databases cover the 11 air-carbon species
 only; `air12.chem` and the default `tcellavg` need a `dsmc` build with the TCE
 backward-barrier and `tcellavg` commits.

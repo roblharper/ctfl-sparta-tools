@@ -70,7 +70,7 @@ def generate_readme(case, in_name: str, artifacts: dict) -> str:
     if "species" in artifacts:
         line("| `species.list` | Per-species molecular data (group default) |")
     if "collision" in artifacts:
-        line("| `collision.list` | VSS collision parameters (group default) |")
+        line("| `collision.list` | Collision parameters: " + case.physics.collision_params.upper() + " |")
     if "gas_chem" in artifacts:
         line(f"| `{_base(case.physics.react_file) or 'air12.chem'}` "
              "| Gas-phase reactions (TCE) |")

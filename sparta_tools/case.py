@@ -16,6 +16,8 @@ if _ROOT not in sys.path:
 _DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 DEFAULT_SPECIES_LIST = "species.list"
 DEFAULT_COLLISION_LIST = "collision.list"
+_COLLISION_DATA = {"vss": ("collision.list", "species.json"),
+                   "vhs": ("collision_vhs.list", "species_vhs.json")}
 DEFAULT_CHEM_FILE = "air12.chem"
 
 # Resolution presets for non-experts: standard DSMC targets. mfp_per_cell sizes
@@ -57,6 +59,7 @@ class WallConfig:
 @dataclass
 class PhysicsConfig:
     collision_model: str = "vss"       # "vss" | "none"
+    collision_params: str = "vhs"      # "vhs" (alpha = 1) | "vss" (per-pair fits); which data file becomes collision.list
     alpha: float = 1.0                 # VSS angular scattering (1.0 = VHS)
     rotate: str = "smooth"             # "no" | "smooth"
     vibrate: str = "smooth"            # "no" | "smooth" | "discrete"
@@ -266,8 +269,11 @@ class SPARTACase:
         if species_file:
             self.species_file = species_file
         else:
-            _pkg_data = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                     "data", "species.json")
+            if self.physics.collision_params not in _COLLISION_DATA:
+                raise ValueError("collision_params must be 'vhs' or 'vss', got "
+                                 f"{self.physics.collision_params!r}")
+            _pkg_data = os.path.join(_DATA_DIR,
+                                     _COLLISION_DATA[self.physics.collision_params][1])
             _repo_root = os.path.join(_ROOT, "species.json")
             self.species_file = (
                 _pkg_data if os.path.isfile(_pkg_data)
@@ -370,9 +376,11 @@ class SPARTACase:
         # Copy the group's canonical data files so the case is self-contained;
         # the .in references these by name (species.list, collision.list, chem).
         import shutil
-        for key, name in (("species", DEFAULT_SPECIES_LIST),
-                          ("collision", DEFAULT_COLLISION_LIST)):
-            shutil.copyfile(os.path.join(_DATA_DIR, name), os.path.join(out, name))
+        for key, src, name in (
+                ("species", DEFAULT_SPECIES_LIST, DEFAULT_SPECIES_LIST),
+                ("collision", _COLLISION_DATA[self.physics.collision_params][0],
+                 DEFAULT_COLLISION_LIST)):
+            shutil.copyfile(os.path.join(_DATA_DIR, src), os.path.join(out, name))
             written[key] = os.path.join(out, name)
         if self.physics.react_enabled:
             chem = os.path.basename(self.physics.react_file) or DEFAULT_CHEM_FILE
@@ -704,6 +712,7 @@ class SPARTACase:
             "",
             "[physics]",
             f"collision_model   = \"{self.physics.collision_model}\"",
+            f"collision_params  = \"{self.physics.collision_params}\"",
             f"alpha             = {self.physics.alpha}",
             f"rotate            = \"{self.physics.rotate}\"",
             f"vibrate           = \"{self.physics.vibrate}\"",
